@@ -1,0 +1,69 @@
+# Build and test on every push to main and every pull request, on all three
+# desktop platforms.
+#
+# The unit tests are pure logic (parser, layout engine, geometry) and the
+# smoke test exercises the headless `--dump` / `--svg` modes, which never
+# open a window — so no display server is needed anywhere.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang pkg-config libfontconfig1-dev \
+            libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libxcb1-dev libx11-xcb-dev libzstd-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ matrix.os }}
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Headless smoke test
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then bin="target/debug/dotv.exe"; else bin="target/debug/dotv"; fi
+          printf 'digraph smoke {\n  rankdir=LR;\n  a -> b -> c;\n  b -> a;\n}\n' > smoke.dot
+          "$bin" --dump smoke.dot > dump.json
+          grep -q '"nodes"' dump.json
+          "$bin" --svg smoke.dot smoke.svg
+          test -s smoke.svg

@@ -1,0 +1,179 @@
+# Build dotv for every supported platform and publish the archives to a
+# GitHub Release.
+#
+# Triggers:
+#   - pushing a tag `v*` (e.g. `git tag v0.1.0 && git push origin v0.1.0`)
+#     builds all five targets and publishes the release; the tag must match
+#     the version in Cargo.toml;
+#   - a manual run (workflow_dispatch) builds everything and keeps the
+#     archives as workflow artifacts only — nothing is released.
+#
+# The matrix follows the other gpui-kit apps (e.g. huacnlee/omasend): native
+# ARM runners for aarch64 Linux, and x86_64 macOS cross-compiled from the
+# arm64 runner. All builds run in release mode with the locked Cargo.lock.
+# A separate publish job uploads the release after every build has finished,
+# so matrix jobs never race each other on the same release.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin # cross-compiled on the arm64 runner
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Oldest macOS whose GPUI support we ship for; without this the binary
+      # would demand the runner's SDK version.
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # GPUI on Linux needs the X11/wayland/fontconfig/Vulkan headers even for
+      # a build whose artifacts link them dynamically at runtime.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang pkg-config libfontconfig1-dev \
+            libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libxcb1-dev libx11-xcb-dev libzstd-dev
+
+      # Link the C runtime statically so the exe has no VCRUNTIME dependency.
+      - name: Use a static Windows C runtime
+        if: runner.os == 'Windows'
+        run: echo 'RUSTFLAGS=-C target-feature=+crt-static' >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Validate release tag against Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version: expected v${version}"
+            exit 1
+          fi
+
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      # The headless modes never open a window, so they run on any runner.
+      # Skipped for the cross-compiled x86_64 macOS build (its binary cannot
+      # execute on the arm64 host).
+      - name: Smoke test the binary (headless)
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/dotv"
+          [ "$RUNNER_OS" = Windows ] && bin="${bin}.exe"
+          printf 'digraph smoke {\n  rankdir=LR;\n  a -> b -> c;\n  b -> a;\n}\n' > smoke.dot
+          "$bin" --dump smoke.dot > dump.json
+          grep -q '"nodes"' dump.json
+          "$bin" --svg smoke.dot smoke.svg
+          test -s smoke.svg
+
+      - name: Package release
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          name="dotv-${version}-${RELEASE_TARGET}"
+          mkdir -p "dist/${name}"
+          bin="target/${RELEASE_TARGET}/release/dotv"
+          [ "$RUNNER_OS" = Windows ] && bin="${bin}.exe"
+          cp "$bin" "dist/${name}/"
+          cp README.md "dist/${name}/"
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -tzip "${name}.zip" "${name}" > /dev/null
+            archive="${name}.zip"
+          else
+            tar -czf "${name}.tar.gz" "${name}"
+            archive="${name}.tar.gz"
+          fi
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum "$archive" > "${archive}.sha256"
+          else
+            shasum -a 256 "$archive" > "${archive}.sha256"
+          fi
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify and combine checksums
+        run: |
+          cd dist
+          cat *.sha256 | sort -k2 > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 5
+          sha256sum --check SHA256SUMS
+          rm -- *.sha256
+          ls -la
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then prerelease+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes \
+            --title "dotv $RELEASE_TAG" "${prerelease[@]}" dist/*
