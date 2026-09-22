@@ -1,0 +1,19 @@
+[package]
+name = "gpui-dot"
+version = "0.1.0"
+edition = "2024"
+description = "dotv — a DOT graph visualizer built with GPUI and GPUI Kit"
+
+[[bin]]
+name = "dotv"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+gpui-kit = "0.6.6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = "z"
