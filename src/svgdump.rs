@@ -13,7 +13,6 @@ use crate::graph::parser;
 use crate::viz::dotview::{ArrowPart, DotView, NodeShape, ViewNode};
 use crate::viz::layout::RankDir;
 
-
 /// The node's label with escapes processed (`\N` etc.) and line breaks turned
 /// into real newlines, for the analytic estimator.
 fn label_plain(graph: &crate::graph::model::Graph, index: usize, raw: &str) -> String {
@@ -21,15 +20,21 @@ fn label_plain(graph: &crate::graph::model::Graph, index: usize, raw: &str) -> S
     if lines.is_empty() {
         return raw.to_string();
     }
-    lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")
+    lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The edge's label with escapes processed.
 fn label_plain_edge(graph: &crate::graph::model::Graph, index: usize, raw: &str) -> String {
     match graph.edge_label_lines(index) {
-        Some(lines) if !lines.is_empty() => {
-            lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")
-        }
+        Some(lines) if !lines.is_empty() => lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => raw.to_string(),
     }
 }
@@ -149,8 +154,10 @@ pub fn run(path: &Path, out: Option<&Path>) {
     let _ = writeln!(
         svg,
         r#"<rect x="{vx}" y="{vy}" width="{vw}" height="{vh}" fill="{bg}"/>"#,
-        vx = min_x - pad, vy = min_y - pad,
-        vw = max_x - min_x + 2.0 * pad, vh = max_y - min_y + 2.0 * pad,
+        vx = min_x - pad,
+        vy = min_y - pad,
+        vw = max_x - min_x + 2.0 * pad,
+        vh = max_y - min_y + 2.0 * pad,
         bg = crate::viz::dotview::color_of(graph.graph_attrs().get("bgcolor"))
             .map(hex)
             .unwrap_or_else(|| "white".to_string()),
@@ -159,7 +166,11 @@ pub fn run(path: &Path, out: Option<&Path>) {
     // clusters
     for c in &view.clusters {
         let (x, y, w, h) = c.rect;
-        let dash = if c.dashed { r#" stroke-dasharray="5,4""# } else { "" };
+        let dash = if c.dashed {
+            r#" stroke-dasharray="5,4""#
+        } else {
+            ""
+        };
         let _ = writeln!(
             svg,
             r#"<rect x="{x:.2}" y="{y:.2}" width="{w:.2}" height="{h:.2}" rx="6" fill="none" stroke="{}"{dash}/>"#,
@@ -227,10 +238,7 @@ pub fn run(path: &Path, out: Option<&Path>) {
 
 fn write_node(svg: &mut String, n: &ViewNode) {
     let stroke = hex(n.stroke);
-    let fill = n
-        .fill
-        .map(hex)
-        .unwrap_or_else(|| "none".to_string());
+    let fill = n.fill.map(hex).unwrap_or_else(|| "none".to_string());
     let dash = if n.dotted {
         r#" stroke-dasharray="1,3""#
     } else if n.dashed {
@@ -354,18 +362,18 @@ fn write_arrow(svg: &mut String, part: &ArrowPart, color: &str) {
             for (x, y) in points {
                 let _ = write!(pts, "{x:.2},{y:.2} ");
             }
-            let _ = writeln!(
-                svg,
-                r#"<polygon points="{}" fill="{color}"/>"#,
-                pts.trim()
-            );
+            let _ = writeln!(svg, r#"<polygon points="{}" fill="{color}"/>"#, pts.trim());
         }
         ArrowPart::Polyline(points) => {
             let mut d = String::new();
             for (i, (x, y)) in points.iter().enumerate() {
                 let _ = write!(d, "{}{x:.2},{y:.2} ", if i == 0 { "M " } else { "L " });
             }
-            let _ = writeln!(svg, r#"<path d="{}" fill="none" stroke="{color}"/>"#, d.trim());
+            let _ = writeln!(
+                svg,
+                r#"<path d="{}" fill="none" stroke="{color}"/>"#,
+                d.trim()
+            );
         }
         ArrowPart::Ellipse(a, b, _filled) => {
             let _ = writeln!(

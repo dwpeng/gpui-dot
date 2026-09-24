@@ -37,12 +37,7 @@ pub fn measure_scaled(
         .enumerate()
         .map(|(i, node)| {
             let font_size = font_size_of(&node.attrs, scale);
-            text_extent_lines(
-                &node_lines(graph, i),
-                text_system,
-                family,
-                font_size,
-            )
+            text_extent_lines(&node_lines(graph, i), text_system, family, font_size)
         })
         .collect();
     let edge_labels: Vec<Option<(f64, f64)>> = graph
@@ -121,7 +116,12 @@ fn text_extent_lines(
                 strikethrough: None,
             };
             text_system
-                .shape_line(SharedString::from(line.clone()), px(font_size as f32), &[run], None)
+                .shape_line(
+                    SharedString::from(line.clone()),
+                    px(font_size as f32),
+                    &[run],
+                    None,
+                )
                 .width()
                 .as_f32() as f64
         })
@@ -151,7 +151,12 @@ fn text_extent(
                 strikethrough: None,
             };
             text_system
-                .shape_line(SharedString::from(*line), px(font_size as f32), &[run], None)
+                .shape_line(
+                    SharedString::from(*line),
+                    px(font_size as f32),
+                    &[run],
+                    None,
+                )
                 .width()
                 .as_f32() as f64
         })

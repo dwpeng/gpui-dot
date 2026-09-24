@@ -61,7 +61,11 @@ fn new_xedge(fg: &mut Fg, t: NId, h: NId) -> EId {
 
 /// `agfindedge(g, t, h)` — the edge from `t` to `h`, if any.
 fn find_xedge(fg: &Fg, t: NId, h: NId) -> Option<EId> {
-    fg.nodes[t].out.iter().copied().find(|&e| fg.edges[e].head == h)
+    fg.nodes[t]
+        .out
+        .iter()
+        .copied()
+        .find(|&e| fg.edges[e].head == h)
 }
 
 /// `agdelete(g, e)` — the edge lists are all the simplex walks, so removing
@@ -364,13 +368,7 @@ fn compile_edges(fg: &mut Fg, ug: GId, xg: &mut Xg) {
 }
 
 /// `compile_clusters` — `\177top`/`\177bot` constraints for compact clusters.
-fn compile_clusters(
-    fg: &mut Fg,
-    g: GId,
-    xg: &mut Xg,
-    top: Option<NId>,
-    bot: Option<NId>,
-) {
+fn compile_clusters(fg: &mut Fg, g: GId, xg: &mut Xg, top: Option<NId>, bot: Option<NId>) {
     let mut top = top;
     let mut bot = bot;
     if is_a_cluster(fg, g) && is_a_strong_cluster(fg, g) {
@@ -608,7 +606,10 @@ pub fn dot2_rank(fg: &mut Fg, g: GId) {
     };
 
     compile_samerank(fg, g, None);
-    let mut xg = Xg { nodes: Vec::new(), weak_id: 0 };
+    let mut xg = Xg {
+        nodes: Vec::new(),
+        weak_id: 0,
+    };
     compile_nodes(fg, g, &mut xg);
     compile_edges(fg, g, &mut xg);
     let (top, bot) = (None, None);

@@ -17,26 +17,26 @@
 
 pub mod arrows;
 pub mod classes;
-pub mod conc;
 pub mod cluster;
+pub mod conc;
+pub mod dot_splines;
 pub mod flat;
 pub mod geom;
 pub mod mincross;
-pub mod newrank;
 pub mod model;
+pub mod newrank;
+pub mod ns;
 pub mod pathplan;
 pub mod position;
 pub mod postprocess;
-pub mod splines;
-pub mod dot_splines;
-pub mod ns;
 pub mod rank;
 pub mod sameport;
 pub mod shapes;
+pub mod splines;
 
 use crate::graph::model::Graph;
 use geom::PointF;
-use model::{ClustType, DEdge, DGraph, DNode, Fg, GId, RankDir, DEF_FONTSIZE};
+use model::{ClustType, DEF_FONTSIZE, DEdge, DGraph, DNode, Fg, GId, RankDir};
 
 /// Measured sizes in points, produced by the text system (or the analytic
 /// estimator in tests). Parallel to `Graph::nodes` / `Graph::edges`.
@@ -166,23 +166,12 @@ fn resolve_edge_port(
     let info = dnode.shape_info.clone();
     let (lw, rw, ht) = (dnode.lw, dnode.rw, dnode.ht);
     let record = fg.records.get(&node);
-    let resolved = shapes::compass_port_rankdir(
-        &desc,
-        lw,
-        rw,
-        ht,
-        Some(&info),
-        record,
-        raw,
-        rankdir,
-    );
+    let resolved =
+        shapes::compass_port_rankdir(&desc, lw, rw, ht, Some(&info), record, raw, rankdir);
     fg.nodes[node].has_port = true;
     let mut port = resolved.into_model_port();
     // `noClip(e, E_tailclip)`: an explicit false turns clipping off.
-    if edge_attrs
-        .get(clip_attr)
-        .is_some_and(|v| !mapbool(Some(v)))
-    {
+    if edge_attrs.get(clip_attr).is_some_and(|v| !mapbool(Some(v))) {
         port.clip = false;
     }
     port
@@ -236,11 +225,12 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
             let measure = measure.0;
             // `flip = !GD_realflip(...)` (shapes.c:3672): records are laid
             // out left-to-right unless the graph is rotated.
-            shapes::record_layout(&input.label(), &input.attrs, !rankdir.flip(), &|s| measure(s))
+            shapes::record_layout(&input.label(), &input.attrs, !rankdir.flip(), &|s| {
+                measure(s)
+            })
         });
         let record_size = record.as_ref().map(shapes::record_node_size);
-        let (w, h, init_vertices, computed) = match (record_size, measured.label.get(i).copied())
-        {
+        let (w, h, init_vertices, computed) = match (record_size, measured.label.get(i).copied()) {
             // `record_init` sized the fields already (+1pt height kluge).
             (Some((rw, rh)), _) => (rw, rh, None, None),
             (None, Some((tw, th))) => {
@@ -437,8 +427,12 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
             .and_then(|s| s.trim().parse::<i32>().ok())
             .unwrap_or(-1),
         tbbalance: attrs.get("TBbalance").cloned(),
-        nslimit1: attrs.get("nslimit1").and_then(|s| s.trim().parse::<f64>().ok()),
-        nslimit: attrs.get("nslimit").and_then(|s| s.trim().parse::<f64>().ok()),
+        nslimit1: attrs
+            .get("nslimit1")
+            .and_then(|s| s.trim().parse::<f64>().ok()),
+        nslimit: attrs
+            .get("nslimit")
+            .and_then(|s| s.trim().parse::<f64>().ok()),
         ..Default::default()
     };
     fg.graphs.push(root);
@@ -492,10 +486,18 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
             dimen.x += 16.0; // PAD(dimen): x += 4*GAP
             dimen.y += 8.0; //              y += 2*GAP
             if !rankdir.flip() {
-                let ix = if label_pos & model::LABEL_AT_TOP != 0 { 2 } else { 0 };
+                let ix = if label_pos & model::LABEL_AT_TOP != 0 {
+                    2
+                } else {
+                    0
+                };
                 border[ix] = dimen;
             } else {
-                let ix = if label_pos & model::LABEL_AT_TOP != 0 { 1 } else { 3 };
+                let ix = if label_pos & model::LABEL_AT_TOP != 0 {
+                    1
+                } else {
+                    3
+                };
                 border[ix] = geom::PointF::new(dimen.y, dimen.x);
             }
         }
@@ -510,10 +512,7 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
             // The parser records both on the subgraph.
             is_cluster_name: sg.is_cluster,
             remincross: sg.attrs.get("remincross").cloned(),
-            cluster_flag: sg
-                .attrs
-                .get("cluster")
-                .is_some_and(|v| mapbool(Some(v))),
+            cluster_flag: sg.attrs.get("cluster").is_some_and(|v| mapbool(Some(v))),
             rank_attr: sg.attrs.get("rank").cloned(),
             compact: sg.attrs.get("compact").is_some_and(|v| mapbool(Some(v))),
             // `rank()` (ns.c:1029-1040) reads `searchsize` *per graph* and
@@ -625,7 +624,11 @@ fn lines_text(lines: Vec<crate::graph::model::LabelLine>, raw: &str) -> (String,
         return (raw.to_string(), vec!['n']);
     }
     let just = lines.iter().map(|l| l.just).collect();
-    let text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+    let text = lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     (text, just)
 }
 
@@ -800,11 +803,7 @@ fn to_layout(fg: &Fg, graph: &Graph) -> DotLayout {
     for e in 0..fg.n_orig_edges {
         let d = &fg.edges[e];
         let input = d.input.unwrap_or(e);
-        let segments = d
-            .spl
-            .as_ref()
-            .map(|s| s.list.clone())
-            .unwrap_or_default();
+        let segments = d.spl.as_ref().map(|s| s.list.clone()).unwrap_or_default();
         let label = d.label.and_then(|idx| {
             let raw = graph.edges[input].label().unwrap_or_default();
             let html = graph.edges[input].label_is_html();
@@ -834,7 +833,11 @@ fn to_layout(fg: &Fg, graph: &Graph) -> DotLayout {
             name: g.name.clone(),
             bb: g.bb,
             label: g.label.clone().map(|l| {
-                let raw = graph.subgraphs[sgi].attrs.get("label").cloned().unwrap_or_default();
+                let raw = graph.subgraphs[sgi]
+                    .attrs
+                    .get("label")
+                    .cloned()
+                    .unwrap_or_default();
                 let html = graph.label_is_html(sgi);
                 let (text, just) = sg_label_text(graph, sgi, &raw, html);
                 LabelOut {
@@ -913,7 +916,7 @@ mod tests {
             label: Vec::new(),
             node: vec![(54.0, 36.0); 2],
             edge_label: Vec::new(),
-                    measure: None,
+            measure: None,
         };
         let out = layout(&g, &measured);
         for (w, h) in &out.sizes {

@@ -10,11 +10,14 @@ use std::path::PathBuf;
 pub use model::Graph;
 pub use parser::DotError;
 
-/// Why a DOT file could not be loaded.
+/// Why a DOT file could not be shown.
 #[derive(Debug)]
 pub enum LoadError {
     Io(std::io::Error),
     Parse(DotError),
+    /// The file parsed, but the layout engine produced a drawing that cannot
+    /// be rendered (non-finite geometry, missing nodes, …).
+    Layout(String),
 }
 
 impl fmt::Display for LoadError {
@@ -22,6 +25,9 @@ impl fmt::Display for LoadError {
         match self {
             LoadError::Io(err) => write!(f, "Failed to read file: {err}"),
             LoadError::Parse(err) => write!(f, "Failed to parse DOT: {err}"),
+            LoadError::Layout(why) => {
+                write!(f, "The layout engine produced an invalid drawing: {why}")
+            }
         }
     }
 }

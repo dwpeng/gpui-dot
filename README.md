@@ -17,10 +17,17 @@ machine.
   original `dot` algorithms (verified against real Graphviz, see
   [docs/architecture.md](docs/architecture.md));
 - **Interactive viewer** — pan, cursor-anchored zoom, drag nodes with live
-  edge re-routing, hover to inspect, fit to window;
+  edge re-routing, hover to inspect, fit to window, and a fullscreen mode
+  (`F11` or the title-bar button, `Esc` exits) that shows only the graph;
+- **Multiple documents at once** — every opened file gets its own tab with
+  independent pan/zoom/selection; switch with `Ctrl+Tab` / `Ctrl+Shift+Tab`,
+  close with `Ctrl+W`. Files open from the dialog (`Ctrl+O`), by dragging
+  them onto the window, or by pasting a file path (`Ctrl+V` — the reliable
+  route when running under WSLg, which does not forward cross-system file
+  drags);
 - **Settings** — node/edge labels, background grid, natural scrolling,
-  layout direction (TB↔LR) and label scale, from the title-bar gear or the
-  status-bar toggles;
+  layout direction (TB↔LR) and label scale, from the status bar (the gear
+  on its left edge and the toggles beside it);
 - **Headless modes** — export the layout as JSON or SVG without a window;
 - **No runtime dependencies** — the font and every icon are compiled into
   the binary.

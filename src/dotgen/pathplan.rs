@@ -255,7 +255,10 @@ fn intersects(pa: PointF, pb: PointF, pc: PointF, pd: PointF) -> bool {
     let ccw3 = ccw(pc, pd, pa);
     let ccw4 = ccw(pc, pd, pb);
     if ccw1 == ISON || ccw2 == ISON || ccw3 == ISON || ccw4 == ISON {
-        return between(pa, pb, pc) || between(pa, pb, pd) || between(pc, pd, pa) || between(pc, pd, pb);
+        return between(pa, pb, pc)
+            || between(pa, pb, pd)
+            || between(pc, pd, pa)
+            || between(pc, pd, pb);
     }
     (ccw1 == ISCCW) != (ccw2 == ISCCW) && (ccw3 == ISCCW) != (ccw4 == ISCCW)
 }
@@ -290,7 +293,11 @@ fn isdiagonal(i: usize, ip2: usize, pts: &[usize], pnls: &[Pnl]) -> bool {
 fn loadtriangle(a: usize, b: usize, c: usize, tris: &mut Vec<Tri>) {
     tris.push(Tri {
         e: [(a, b), (b, c), (c, a)],
-        right_index: [std::cell::Cell::new(SIZE_MAX), std::cell::Cell::new(SIZE_MAX), std::cell::Cell::new(SIZE_MAX)],
+        right_index: [
+            std::cell::Cell::new(SIZE_MAX),
+            std::cell::Cell::new(SIZE_MAX),
+            std::cell::Cell::new(SIZE_MAX),
+        ],
         mark: std::cell::Cell::new(0),
     });
 }
@@ -381,8 +388,7 @@ pub fn pshortestpath(polyp: &[PointF], eps: &[PointF; 2]) -> Result<Vec<PointF>,
     let p2 = polyp[minpi];
     let p1 = polyp[(minpi + pn - 1) % pn];
     let p3 = polyp[(minpi + 1) % pn];
-    let reverse = (p1.x == p2.x && p2.x == p3.x && p3.y > p2.y)
-        || ccw(p1, p2, p3) != ISCCW;
+    let reverse = (p1.x == p2.x && p2.x == p3.x && p3.y > p2.y) || ccw(p1, p2, p3) != ISCCW;
 
     // node arena: polygon nodes then the two endpoints (indices pn, pn+1)
     let mut pnls: Vec<Pnl> = Vec::with_capacity(pn + 2);
@@ -392,7 +398,10 @@ pub fn pshortestpath(polyp: &[PointF], eps: &[PointF; 2]) -> Result<Vec<PointF>,
             if polyp[pi] == prev {
                 continue; // dup
             }
-            pnls.push(Pnl { pp: polyp[pi], link: std::cell::Cell::new(SIZE_MAX) });
+            pnls.push(Pnl {
+                pp: polyp[pi],
+                link: std::cell::Cell::new(SIZE_MAX),
+            });
         }
     } else {
         for pi in 0..pn {
@@ -400,14 +409,23 @@ pub fn pshortestpath(polyp: &[PointF], eps: &[PointF; 2]) -> Result<Vec<PointF>,
             if polyp[pi] == prev {
                 continue;
             }
-            pnls.push(Pnl { pp: polyp[pi], link: std::cell::Cell::new(SIZE_MAX) });
+            pnls.push(Pnl {
+                pp: polyp[pi],
+                link: std::cell::Cell::new(SIZE_MAX),
+            });
         }
     }
     let pnll = pnls.len();
     let eps0_idx = pnll;
     let eps1_idx = pnll + 1;
-    pnls.push(Pnl { pp: eps[0], link: std::cell::Cell::new(SIZE_MAX) });
-    pnls.push(Pnl { pp: eps[1], link: std::cell::Cell::new(SIZE_MAX) });
+    pnls.push(Pnl {
+        pp: eps[0],
+        link: std::cell::Cell::new(SIZE_MAX),
+    });
+    pnls.push(Pnl {
+        pp: eps[1],
+        link: std::cell::Cell::new(SIZE_MAX),
+    });
 
     // triangulate
     let mut tris: Vec<Tri> = Vec::new();
@@ -658,7 +676,12 @@ struct RouteCtx<'b> {
 }
 
 /// route.c `reallyroutespline`.
-fn reallyroutespline(ctx: &mut RouteCtx, inps: &[PointF], ev0: PointF, ev1: PointF) -> Result<(), i32> {
+fn reallyroutespline(
+    ctx: &mut RouteCtx,
+    inps: &[PointF],
+    ev0: PointF,
+    ev1: PointF,
+) -> Result<(), i32> {
     let inpn = inps.len();
     debug_assert!(inpn > 0);
     let mut tnas: Vec<(f64, [PointF; 2])> = vec![(0.0, [PointF::ZERO; 2]); inpn];
@@ -713,7 +736,12 @@ fn reallyroutespline(ctx: &mut RouteCtx, inps: &[PointF], ev0: PointF, ev1: Poin
 }
 
 /// route.c `mkspline` — least-squares handle magnitudes.
-fn mkspline(inps: &[PointF], tnas: &[(f64, [PointF; 2])], ev0: PointF, ev1: PointF) -> (PointF, PointF, PointF, PointF) {
+fn mkspline(
+    inps: &[PointF],
+    tnas: &[(f64, [PointF; 2])],
+    ev0: PointF,
+    ev1: PointF,
+) -> (PointF, PointF, PointF, PointF) {
     let inpn = inps.len();
     let mut c00 = 0.0;
     let mut c01 = 0.0;
@@ -757,7 +785,14 @@ fn mkspline(inps: &[PointF], tnas: &[(f64, [PointF; 2])], ev0: PointF, ev1: Poin
 }
 
 /// route.c `splinefits` — 1 = fitted, 0 = no fit, -1 = failure.
-fn splinefits(ctx: &mut RouteCtx, pa: PointF, va: PointF, pb: PointF, vb: PointF, inps: &[PointF]) -> i32 {
+fn splinefits(
+    ctx: &mut RouteCtx,
+    pa: PointF,
+    va: PointF,
+    pb: PointF,
+    vb: PointF,
+    inps: &[PointF],
+) -> i32 {
     let inpn = inps.len();
     let forceflag = inpn == 2;
     let mut a = 4.0f64;
@@ -989,7 +1024,10 @@ mod tests {
             assert!(poly.iter().any(|q| dist(*q, *p) < 1e-9), "{p:?}");
         }
         // and it must actually bend around (40,40)
-        assert!(path.iter().any(|p| dist(*p, PointF::new(40.0, 40.0)) < 1e-9));
+        assert!(
+            path.iter()
+                .any(|p| dist(*p, PointF::new(40.0, 40.0)) < 1e-9)
+        );
     }
 
     #[test]
@@ -1011,7 +1049,11 @@ mod tests {
 
     #[test]
     fn make_polyline_expands() {
-        let line = vec![PointF::ZERO, PointF::new(10.0, 0.0), PointF::new(10.0, 10.0)];
+        let line = vec![
+            PointF::ZERO,
+            PointF::new(10.0, 0.0),
+            PointF::new(10.0, 10.0),
+        ];
         let out = make_polyline(&line);
         assert_eq!(out.len(), 3 * 3 - 2);
         // segment 0 = (p0, p0, p1, p1)

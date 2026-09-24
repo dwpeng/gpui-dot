@@ -42,16 +42,17 @@ pub fn snap_bounds(bounds: Bounds<Pixels>, scale: f32) -> Bounds<Pixels> {
     if scale <= 0.0 {
         return bounds;
     }
-    let snap = |v: Pixels| -> Pixels {
-        px((v.as_f32() * scale).round() / scale)
-    };
+    let snap = |v: Pixels| -> Pixels { px((v.as_f32() * scale).round() / scale) };
     let x0 = snap(bounds.origin.x);
     let y0 = snap(bounds.origin.y);
     let x1 = snap(bounds.origin.x + bounds.size.width);
     let y1 = snap(bounds.origin.y + bounds.size.height);
     Bounds {
         origin: point(x0, y0),
-        size: size((x1 - x0).max(px(1.0 / scale)), (y1 - y0).max(px(1.0 / scale))),
+        size: size(
+            (x1 - x0).max(px(1.0 / scale)),
+            (y1 - y0).max(px(1.0 / scale)),
+        ),
     }
 }
 
@@ -208,12 +209,7 @@ fn fill_poly(window: &mut Window, points: &[Point<Pixels>], color: Hsla) {
 }
 
 /// Shared closed-ring stroke. The ring is traced exactly: corners sharp.
-fn stroke_ring(
-    window: &mut Window,
-    ring: &[Point<Pixels>],
-    width: Pixels,
-    color: Hsla,
-) {
+fn stroke_ring(window: &mut Window, ring: &[Point<Pixels>], width: Pixels, color: Hsla) {
     if ring.len() < 2 {
         return;
     }
@@ -639,8 +635,14 @@ pub fn flatten_cubic_into(
     stack.push([p0, p1, p2, p3]);
     while let Some([p0, p1, p2, p3]) = stack.pop() {
         // Squared flatness: both "control-point drift" terms together.
-        let (ux, uy) = (3.0 * p1.0 - 2.0 * p0.0 - p3.0, 3.0 * p1.1 - 2.0 * p0.1 - p3.1);
-        let (vx, vy) = (3.0 * p2.0 - 2.0 * p3.0 - p0.0, 3.0 * p2.1 - 2.0 * p3.1 - p0.1);
+        let (ux, uy) = (
+            3.0 * p1.0 - 2.0 * p0.0 - p3.0,
+            3.0 * p1.1 - 2.0 * p0.1 - p3.1,
+        );
+        let (vx, vy) = (
+            3.0 * p2.0 - 2.0 * p3.0 - p0.0,
+            3.0 * p2.1 - 2.0 * p3.1 - p0.1,
+        );
         let flatness2 = (ux * ux).max(vx * vx) + (uy * uy).max(vy * vy);
         if flatness2 <= tolerance * tolerance {
             out.push(p3);

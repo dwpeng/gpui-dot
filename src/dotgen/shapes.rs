@@ -816,11 +816,7 @@ fn attr_f64_wrapper(_attrs: &BTreeMap<String, String>, penwidth: f64) -> f64 {
 }
 
 /// `point_init` (shapes.c:3103-3192).
-fn point_init_info(
-    desc: &ShapeDesc,
-    attrs: &BTreeMap<String, String>,
-    penwidth: f64,
-) -> PolyInit {
+fn point_init_info(desc: &ShapeDesc, attrs: &BTreeMap<String, String>, penwidth: f64) -> PolyInit {
     let dbl_max = f64::MAX;
     let w = attr_f64(attrs, "width", dbl_max, MIN_NODEWIDTH);
     let h = attr_f64(attrs, "height", dbl_max, MIN_NODEHEIGHT);
@@ -968,16 +964,12 @@ fn poly_init_poly(
 
     // labelloc (shapes.c:2065-2070)
     let label_valign = match attr_str(attrs, "labelloc") {
-        Some(s) if s.starts_with('t') || s.starts_with('b') => {
-            s.as_bytes()[0] as char
-        }
+        Some(s) if s.starts_with('t') || s.starts_with('b') => s.as_bytes()[0] as char,
         _ => 'c',
     };
 
-    let is_box = sides == 4
-        && orientation.rem_euclid(90.0).abs() < 0.5
-        && distortion == 0.0
-        && skew == 0.0;
+    let is_box =
+        sides == 4 && orientation.rem_euclid(90.0).abs() < 0.5 && distortion == 0.0 && skew == 0.0;
     if is_box {
         // for regular boxes the fit should be exact (shapes.c:2074-2075)
     } else if let Some(vg) = base.vertex_gen {
@@ -1218,7 +1210,13 @@ pub fn shape_size(
     attrs: &BTreeMap<String, String>,
     regular_quantum: f64,
 ) -> (f64, f64) {
-    let info = poly_init_info(desc, label_dimen, attrs, DEFAULT_NODEPENWIDTH, regular_quantum);
+    let info = poly_init_info(
+        desc,
+        label_dimen,
+        attrs,
+        DEFAULT_NODEPENWIDTH,
+        regular_quantum,
+    );
     match desc.fns {
         ShapeFns::Record => (
             info.width_in * POINTS_PER_INCH,
@@ -1253,7 +1251,12 @@ pub fn gen_poly_vertices(
 }
 
 /// The inner generator (also used by `poly_init`).
-fn gen_poly_vertices_inner(sides: i32, skew: f64, distortion: f64, orientation: f64) -> Vec<PointF> {
+fn gen_poly_vertices_inner(
+    sides: i32,
+    skew: f64,
+    distortion: f64,
+    orientation: f64,
+) -> Vec<PointF> {
     let sides = sides as usize;
     let sectorangle = 2.0 * PI / sides as f64;
     let sidelength = (sectorangle / 2.0).sin();
@@ -1266,9 +1269,8 @@ fn gen_poly_vertices_inner(sides: i32, skew: f64, distortion: f64, orientation: 
     let mut r = PointF::new(0.5 * cosx, 0.5 * sinx);
     let mut vertices: Vec<PointF> = Vec::with_capacity(sides);
     angle += (PI - sectorangle) / 2.0;
-    let is_box = sides == 4 && orientation.rem_euclid(90.0).abs() < 0.5
-        && distortion == 0.0
-        && skew == 0.0;
+    let is_box =
+        sides == 4 && orientation.rem_euclid(90.0).abs() < 0.5 && distortion == 0.0 && skew == 0.0;
     for _ in 0..sides {
         // next regular vertex
         angle += sectorangle;
@@ -1278,10 +1280,7 @@ fn gen_poly_vertices_inner(sides: i32, skew: f64, distortion: f64, orientation: 
         r.y += sidelength * sinx;
 
         // distort and skew
-        let mut p = PointF::new(
-            r.x * (skewdist + r.y * gdistortion) + r.y * gskew,
-            r.y,
-        );
+        let mut p = PointF::new(r.x * (skewdist + r.y * gdistortion) + r.y * gskew, r.y);
 
         // orient
         let alpha = radians(orientation) + p.y.atan2(p.x);
@@ -1323,7 +1322,11 @@ fn star_size(sz0: PointF) -> PointF {
 fn star_vertices_into(vertices: &mut Vec<PointF>, bb: &mut PointF) {
     let mut sz = *bb;
     let aspect = (1.0 + STAR_ALPHA3.sin()) / (2.0 * STAR_ALPHA.cos());
-    let a = if sz.x == 0.0 { f64::INFINITY } else { sz.y / sz.x };
+    let a = if sz.x == 0.0 {
+        f64::INFINITY
+    } else {
+        sz.y / sz.x
+    };
     if a > aspect {
         sz.x = sz.y / aspect;
     } else if a < aspect {
@@ -1335,15 +1338,9 @@ fn star_vertices_into(vertices: &mut Vec<PointF>, bb: &mut PointF) {
     let mut theta = STAR_ALPHA;
     let mut i = 0;
     while i < 10 {
-        vertices.push(PointF::new(
-            r * theta.cos(),
-            r * theta.sin() - offset,
-        ));
+        vertices.push(PointF::new(r * theta.cos(), r * theta.sin() - offset));
         theta += STAR_ALPHA2;
-        vertices.push(PointF::new(
-            r0 * theta.cos(),
-            r0 * theta.sin() - offset,
-        ));
+        vertices.push(PointF::new(r0 * theta.cos(), r0 * theta.sin() - offset));
         theta += STAR_ALPHA2;
         i += 2;
     }
@@ -1387,12 +1384,7 @@ fn cylinder_vertices(bb: PointF) -> Vec<PointF> {
 /// Periphery rings: offset each ring-0 vertex along its angle bisector by
 /// `GAP` per ring, plus a `penwidth/2` outline ring (shapes.c:2291-2350).
 /// `vertices` must be `outp*sides` long with ring 0 filled.
-fn add_periphery_rings(
-    vertices: &mut [PointF],
-    sides: usize,
-    peripheries: i32,
-    penwidth: f64,
-) {
+fn add_periphery_rings(vertices: &mut [PointF], sides: usize, peripheries: i32, penwidth: f64) {
     let outp = vertices.len() / sides;
     let i_scan = sides; // C leaves its loop variable at `sides` here
     let r = vertices[0];
@@ -2278,7 +2270,11 @@ pub fn resolve_port(
         lw,
         rw,
         ht,
-        if old.bp == BoxF::default() { None } else { Some(old.bp) },
+        if old.bp == BoxF::default() {
+            None
+        } else {
+            Some(old.bp)
+        },
         old.side,
         flip,
         n_coord,
@@ -2293,7 +2289,11 @@ pub fn resolve_port(
             rw,
             ht,
             info,
-            if old.bp == BoxF::default() { None } else { Some(old.bp) },
+            if old.bp == BoxF::default() {
+                None
+            } else {
+                Some(old.bp)
+            },
             c,
             old.side,
             rd,
@@ -2489,7 +2489,10 @@ fn ray_inside(
     if desc.fns == ShapeFns::Record {
         // records use compassPort with bp set — no ray search happens.
         let ext = penwidth / 2.0;
-        return p.x >= -lw - ext && p.x <= rw + ext && p.y >= -ht / 2.0 - ext && p.y <= ht / 2.0 + ext;
+        return p.x >= -lw - ext
+            && p.x <= rw + ext
+            && p.y >= -ht / 2.0 - ext
+            && p.y <= ht / 2.0 + ext;
     }
     let (sides, flat) = build_rings_flat(desc, lw + rw, ht, penwidth);
     if sides == 0 || flat.is_empty() {
@@ -2540,11 +2543,7 @@ fn compass_point(
             break;
         }
     }
-    if found {
-        best
-    } else {
-        pt
-    }
+    if found { best } else { pt }
 }
 
 /// `compassPort` (shapes.c:2698-2878).
@@ -2570,15 +2569,9 @@ fn compass_port_core(
         ),
         None => {
             let b = if flip {
-                BoxF::new(
-                    PointF::new(-ht / 2.0, -lw),
-                    PointF::new(ht / 2.0, lw),
-                )
+                BoxF::new(PointF::new(-ht / 2.0, -lw), PointF::new(ht / 2.0, lw))
             } else {
-                BoxF::new(
-                    PointF::new(-lw, -ht / 2.0),
-                    PointF::new(lw, ht / 2.0),
-                )
+                BoxF::new(PointF::new(-lw, -ht / 2.0), PointF::new(lw, ht / 2.0))
             };
             (b, PointF::ZERO, false)
         }
@@ -2724,12 +2717,15 @@ fn compass_port_core(
         }
     }
 
-    p = cwrotatepf(p, 90 * match rd {
-        RankDir::Tb => 0,
-        RankDir::Lr => 1,
-        RankDir::Bt => 2,
-        RankDir::Rl => 3,
-    });
+    p = cwrotatepf(
+        p,
+        90 * match rd {
+            RankDir::Tb => 0,
+            RankDir::Lr => 1,
+            RankDir::Bt => 2,
+            RankDir::Rl => 3,
+        },
+    );
     let final_side = if dyna { side } else { invflip_side(side, rd) };
     let order = if p.x == 0.0 && p.y == 0.0 {
         (MC_SCALE / 2.0) as u8 // shapes.c:2864-2865 — center = 128
@@ -2813,7 +2809,11 @@ pub fn compass_port_rankdir(
     if name.is_empty() {
         // poly_port/record_port: portname[0] == '\0' → Center
         let mut rp = ResolvedPort::center();
-        rp.name = Some(compass_part.map(str::to_string).unwrap_or_else(|| port.to_string()));
+        rp.name = Some(
+            compass_part
+                .map(str::to_string)
+                .unwrap_or_else(|| port.to_string()),
+        );
         return rp;
     }
     let penwidth = DEFAULT_NODEPENWIDTH;
@@ -2983,7 +2983,13 @@ pub fn cylinder_bottom_cap(af: &[PointF]) -> [PointF; 7] {
 /// Periphery ring half-extents for ellipse-family shapes (`sides <= 2`):
 /// one `(hx, hy)` pair per ring, innermost first, from the final node box
 /// (ring `j` sits `GAP` outside ring `j-1`; shapes.c:2170-2184).
-pub fn ellipse_rings(desc: &ShapeDesc, lw: f64, rw: f64, ht: f64, penwidth: f64) -> Vec<(f64, f64)> {
+pub fn ellipse_rings(
+    desc: &ShapeDesc,
+    lw: f64,
+    rw: f64,
+    ht: f64,
+    penwidth: f64,
+) -> Vec<(f64, f64)> {
     let peripheries = desc.poly.peripheries.max(0);
     let mut rings = Vec::new();
     if peripheries < 1 {
@@ -3017,7 +3023,10 @@ fn ring0_for(desc: &ShapeDesc, w: f64, h: f64) -> Vec<PointF> {
     }
     if base.sides <= 2 {
         // 2-point bbox ring (shapes.c:2169-2172)
-        return vec![PointF::new(-w / 2.0, -h / 2.0), PointF::new(w / 2.0, h / 2.0)];
+        return vec![
+            PointF::new(-w / 2.0, -h / 2.0),
+            PointF::new(w / 2.0, h / 2.0),
+        ];
     }
     let unit = gen_poly_vertices_inner(base.sides, base.skew, base.distortion, base.orientation);
     let xmax = unit.iter().map(|v| v.x.abs()).fold(0.0f64, f64::max);
@@ -3123,7 +3132,10 @@ pub fn shape_vertices(
 /// COMPONENT, shapes.c:740-906): returns `(polygon, inner polylines)` for
 /// the given ring (the node-frame ring 0 from [`shape_vertices`]).
 /// `None` for other shapes. SBOLv glyphs are not ported.
-pub fn special_shape_outline(desc: &ShapeDesc, af: &[PointF]) -> Option<(Vec<PointF>, Vec<[PointF; 2]>)> {
+pub fn special_shape_outline(
+    desc: &ShapeDesc,
+    af: &[PointF],
+) -> Option<(Vec<PointF>, Vec<[PointF; 2]>)> {
     if desc.fns != ShapeFns::Poly || af.len() != 4 {
         return None;
     }
@@ -3178,14 +3190,8 @@ pub fn special_shape_outline(desc: &ShapeDesc, af: &[PointF]) -> Option<(Vec<Poi
                 af[0].x - (af[0].x - b[1].x) / 4.0,
                 af[0].y + (b[3].y - b[4].y) / 3.0,
             ));
-            d.push(PointF::new(
-                af[0].x - 2.0 * (af[0].x - b[1].x),
-                d[1].y,
-            ));
-            d.push(PointF::new(
-                af[0].x - 2.25 * (af[0].x - b[1].x),
-                b[3].y,
-            ));
+            d.push(PointF::new(af[0].x - 2.0 * (af[0].x - b[1].x), d[1].y));
+            d.push(PointF::new(af[0].x - 2.25 * (af[0].x - b[1].x), b[3].y));
             d.push(b[3]);
             for seg in 4..sides + 3 {
                 d.push(af[seg - 3]);
@@ -3313,20 +3319,44 @@ mod tests {
         // unit generation has the same count
         assert_eq!(gen_poly_vertices(4, 0.0, 0.0, false, 45.0).len(), 4);
         // the inside test rejects outside the diamond edges
-        let info = poly_init_info(&desc, PointF::ZERO, &attrs(&[("width", "0.75"), ("height", "0.5")]), 0.0, 0.0);
+        let info = poly_init_info(
+            &desc,
+            PointF::ZERO,
+            &attrs(&[("width", "0.75"), ("height", "0.5")]),
+            0.0,
+            0.0,
+        );
         let si = ShapeInfo {
             kind: "diamond".into(),
             sides: info.poly.sides,
             vertices: Some(info.poly.vertices.clone()),
             ..ShapeInfo::default()
         };
-        assert!(poly_inside_test(&desc, 27.0, 27.0, 36.0, &si, None, PointF::ZERO));
+        assert!(poly_inside_test(
+            &desc,
+            27.0,
+            27.0,
+            36.0,
+            &si,
+            None,
+            PointF::ZERO
+        ));
         assert!(!poly_inside_test(
-            &desc, 27.0, 27.0, 36.0, &si, None,
+            &desc,
+            27.0,
+            27.0,
+            36.0,
+            &si,
+            None,
             PointF::new(26.0, 17.0)
         ));
         assert!(poly_inside_test(
-            &desc, 27.0, 27.0, 36.0, &si, None,
+            &desc,
+            27.0,
+            27.0,
+            36.0,
+            &si,
+            None,
             PointF::new(13.0, 8.0)
         ));
     }
@@ -3362,9 +3392,22 @@ mod tests {
         // record_inside: inside the root box (+penwidth/2), outside beyond
         let desc = shape_of("record");
         assert!(record_inside_test(&layout, None, PointF::ZERO, 1.0));
-        assert!(!record_inside_test(&layout, None, PointF::new(28.0, 0.0), 1.0));
+        assert!(!record_inside_test(
+            &layout,
+            None,
+            PointF::new(28.0, 0.0),
+            1.0
+        ));
         // the shape-sized fallback also treats it as a box
-        assert!(poly_inside_test(&desc, 27.0, 27.0, 44.0, &ShapeInfo::default(), None, PointF::ZERO));
+        assert!(poly_inside_test(
+            &desc,
+            27.0,
+            27.0,
+            44.0,
+            &ShapeInfo::default(),
+            None,
+            PointF::ZERO
+        ));
     }
 
     /// (f) compass port "e" on a box → right border midpoint.
@@ -3472,9 +3515,19 @@ mod tests {
         );
         assert_eq!((w, h), (54.4, 36.0));
         // margin=0,0 disables padding entirely
-        let (w, h) = shape_size(&desc, PointF::new(40.0, 14.0), &attrs(&[("margin", "0,0")]), 0.0);
+        let (w, h) = shape_size(
+            &desc,
+            PointF::new(40.0, 14.0),
+            &attrs(&[("margin", "0,0")]),
+            0.0,
+        );
         assert_eq!((w, h), (54.0, 36.0));
-        let (w, _) = shape_size(&desc, PointF::new(40.0, 14.0), &attrs(&[("margin", "junk")]), 0.0);
+        let (w, _) = shape_size(
+            &desc,
+            PointF::new(40.0, 14.0),
+            &attrs(&[("margin", "junk")]),
+            0.0,
+        );
         assert_eq!(w, 56.0); // PAD fallback
         // two-component margin
         let (w, h) = shape_size(
@@ -3549,7 +3602,12 @@ mod tests {
         // corner radius capped at RBCONST / 3 per edge... rbconst = min(12, len/3)
         // box: 72 wide, 36 tall → rbconst = min(12, 72/3, 36/3) = 12 → t = 12/36
         let b = alloc_interpolation_points(
-            &[PointF::new(27.0, 18.0), PointF::new(-27.0, 18.0), PointF::new(-27.0, -18.0), PointF::new(27.0, -18.0)],
+            &[
+                PointF::new(27.0, 18.0),
+                PointF::new(-27.0, 18.0),
+                PointF::new(-27.0, -18.0),
+                PointF::new(27.0, -18.0),
+            ],
             0,
             false,
         );
@@ -3568,10 +3626,22 @@ mod tests {
         let desc = shape_of("box");
         let b = BoxF::new(PointF::new(-10.0, -5.0), PointF::new(10.0, 5.0));
         assert!(poly_inside_test(
-            &desc, 27.0, 27.0, 36.0, &ShapeInfo::default(), Some(b), PointF::new(9.0, 4.0)
+            &desc,
+            27.0,
+            27.0,
+            36.0,
+            &ShapeInfo::default(),
+            Some(b),
+            PointF::new(9.0, 4.0)
         ));
         assert!(!poly_inside_test(
-            &desc, 27.0, 27.0, 36.0, &ShapeInfo::default(), Some(b), PointF::new(11.0, 0.0)
+            &desc,
+            27.0,
+            27.0,
+            36.0,
+            &ShapeInfo::default(),
+            Some(b),
+            PointF::new(11.0, 0.0)
         ));
     }
 

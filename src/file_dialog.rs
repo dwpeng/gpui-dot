@@ -102,16 +102,13 @@ fn find_powershell() -> Option<PathBuf> {
         "powershell.exe",
         "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
     ];
-    CANDIDATES
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|candidate| {
-            if candidate.is_absolute() {
-                candidate.is_file()
-            } else {
-                on_path(candidate)
-            }
-        })
+    CANDIDATES.into_iter().map(PathBuf::from).find(|candidate| {
+        if candidate.is_absolute() {
+            candidate.is_file()
+        } else {
+            on_path(candidate)
+        }
+    })
 }
 
 fn on_path(name: &Path) -> bool {
@@ -149,6 +146,32 @@ fn windows_path(path: &Path) -> Option<String> {
 /// quotes doubled.
 fn ps_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
+}
+
+/// Parses pasted text into candidate file paths. Copying a file in Windows
+/// Explorer puts its path (or paths, one per line) on the clipboard as text —
+/// the format WSLg actually forwards into Linux — so each line is trimmed,
+/// unwrapped from quotes and `file://` URIs, and translated from a Windows
+/// path to its native Linux path where possible.
+pub fn parse_pasted_paths(text: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for line in text.lines() {
+        // `file:///path` is a local file URI: the third slash starts the path.
+        let line = match line.trim().strip_prefix("file://") {
+            Some(rest) if rest.starts_with('/') => rest,
+            Some(_) => continue, // remote or malformed URI: not a local file
+            None => line.trim(),
+        };
+        let line = line.trim_matches(|c: char| c == '"' || c == '\'').trim();
+        if line.is_empty() {
+            continue;
+        }
+        let path = to_linux_path(line);
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    paths
 }
 
 /// The native Linux path for a Windows-picked path. `wslpath -u` knows the
@@ -199,5 +222,25 @@ mod tests {
             to_linux_path(r"\\wsl$\Debian\home\dwpeng\graph.dot"),
             PathBuf::from("/home/dwpeng/graph.dot")
         );
+    }
+
+    #[test]
+    fn pasted_text_yields_one_path_per_line() {
+        assert_eq!(
+            parse_pasted_paths("/tmp/a.dot\n\n/tmp/b.gv\n"),
+            vec![PathBuf::from("/tmp/a.dot"), PathBuf::from("/tmp/b.gv"),]
+        );
+        // Explorer wraps a single copied file's path in quotes; the Windows
+        // path itself is translated by `wslpath`, which only exists under
+        // WSL, so assert the unwrapping on a platform-independent path.
+        assert_eq!(
+            parse_pasted_paths("\"/tmp/my graph.dot\""),
+            vec![PathBuf::from("/tmp/my graph.dot")]
+        );
+        assert_eq!(
+            parse_pasted_paths("file:///home/dwpeng/graph.dot"),
+            vec![PathBuf::from("/home/dwpeng/graph.dot")]
+        );
+        assert!(parse_pasted_paths("   ").is_empty());
     }
 }

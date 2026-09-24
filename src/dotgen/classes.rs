@@ -6,7 +6,7 @@
 //! (`agfstnode` × `agfstout` — input order), *not* the fast node list; the
 //! port mirrors that via `DGraph::nodes_order` and `Fg::input_out`.
 
-use super::model::{CL_CROSS, EdgeType, EId, Fg, GId, MC_SCALE, NId, RankType, SLACKNODE, VIRTUAL};
+use super::model::{CL_CROSS, EId, EdgeType, Fg, GId, MC_SCALE, NId, RankType, SLACKNODE, VIRTUAL};
 
 /// `find_fast_edge` — searches the fast out/in lists.
 pub fn find_fast_edge(fg: &Fg, u: NId, v: NId) -> Option<EId> {
@@ -92,7 +92,16 @@ pub fn new_virtual_edge(fg: &mut Fg, u: NId, v: NId, orig: Option<EId>) -> EId {
         let (ot, oh) = (fg.edges[orig].tail, fg.edges[orig].head);
         let (otp, ohp, oseq, ocount, oxp, ow, oml, oto_virt) = {
             let o = &fg.edges[orig];
-            (o.tail_port, o.head_port, o.seq, o.count, o.xpenalty, o.weight, o.minlen, o.to_virt)
+            (
+                o.tail_port,
+                o.head_port,
+                o.seq,
+                o.count,
+                o.xpenalty,
+                o.weight,
+                o.minlen,
+                o.to_virt,
+            )
         };
         {
             let te = &mut fg.edges[e];
@@ -410,7 +419,10 @@ pub fn build_skeleton(fg: &mut Fg, g: GId, subg: GId) {
             if !fg.graphs[subg].owns_input_edge(fg, e) {
                 continue;
             }
-            let (tr, hr) = (fg.nodes[fg.edges[e].tail].rank, fg.nodes[fg.edges[e].head].rank);
+            let (tr, hr) = (
+                fg.nodes[fg.edges[e].tail].rank,
+                fg.nodes[fg.edges[e].head].rank,
+            );
             let mut r = tr;
             while r < hr {
                 let first = fg.nodes[rl].out.first().copied().expect("skeleton edge");
@@ -464,7 +476,11 @@ fn interclust1(fg: &mut Fg, g: GId, t: NId, h: NId, e: EId) {
         None => 0,
     };
     let offset = fg.edges[e].minlen + t_rank - h_rank;
-    let (t_len, h_len) = if offset > 0 { (0, offset) } else { (-offset, 0) };
+    let (t_len, h_len) = if offset > 0 {
+        (0, offset)
+    } else {
+        (-offset, 0)
+    };
 
     let v = virtual_node(fg, g);
     fg.nodes[v].node_type = SLACKNODE;
@@ -679,9 +695,7 @@ pub fn class2(fg: &mut Fg, g: GId) {
                     if fg.edges[prev_e].to_virt.is_some() {
                         merge_chain(fg, g, e, fg.edges[prev_e].to_virt.unwrap(), false);
                         other_edge(fg, e);
-                    } else if fg.nodes[fg.edges[e].tail].rank
-                        == fg.nodes[fg.edges[e].head].rank
-                    {
+                    } else if fg.nodes[fg.edges[e].tail].rank == fg.nodes[fg.edges[e].head].rank {
                         merge_oneway(fg, e, prev_e);
                         other_edge(fg, e);
                     }
@@ -734,7 +748,10 @@ pub fn class2(fg: &mut Fg, g: GId) {
                 continue;
             }
 
-            let (tr, hr) = (fg.nodes[fg.edges[e].tail].rank, fg.nodes[fg.edges[e].head].rank);
+            let (tr, hr) = (
+                fg.nodes[fg.edges[e].tail].rank,
+                fg.nodes[fg.edges[e].head].rank,
+            );
 
             // flat edges
             if tr == hr {

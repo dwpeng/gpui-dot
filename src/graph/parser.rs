@@ -32,7 +32,11 @@ pub struct DotError {
 
 impl fmt::Display for DotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "line {}, column {}: {}", self.line, self.column, self.message)
+        write!(
+            f,
+            "line {}, column {}: {}",
+            self.line, self.column, self.message
+        )
     }
 }
 
@@ -112,7 +116,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn error(&self, line: usize, column: usize, message: impl Into<String>) -> DotError {
-        DotError { line, column, message: message.into() }
+        DotError {
+            line,
+            column,
+            message: message.into(),
+        }
     }
 
     fn peek(&self) -> Option<char> {
@@ -141,24 +149,38 @@ impl<'a> Lexer<'a> {
             let (line, column) = (self.line, self.column);
             self.skip_trivia()?;
             let Some(c) = self.peek() else {
-                tokens.push(Token { tok: Tok::Eof, line, column });
+                tokens.push(Token {
+                    tok: Tok::Eof,
+                    line,
+                    column,
+                });
                 break;
             };
             // Re-read the position after trivia so it points at the token.
             let (line, column) = (self.line, self.column);
             let number_start = match c {
-                '-' => self.peek_at(1).is_some_and(|n| n.is_ascii_digit() || n == '.'),
+                '-' => self
+                    .peek_at(1)
+                    .is_some_and(|n| n.is_ascii_digit() || n == '.'),
                 '.' => self.peek_at(1).is_some_and(|n| n.is_ascii_digit()),
                 d => d.is_ascii_digit(),
             };
             match c {
                 '"' => {
                     let s = self.scan_quoted()?;
-                    tokens.push(Token { tok: Tok::Atom(s, AtomKind::Quoted), line, column });
+                    tokens.push(Token {
+                        tok: Tok::Atom(s, AtomKind::Quoted),
+                        line,
+                        column,
+                    });
                 }
                 '<' => {
                     let s = self.scan_html()?;
-                    tokens.push(Token { tok: Tok::Atom(s, AtomKind::Html), line, column });
+                    tokens.push(Token {
+                        tok: Tok::Atom(s, AtomKind::Html),
+                        line,
+                        column,
+                    });
                 }
                 '-' if !number_start => {
                     let second = self.peek_at(1);
@@ -170,10 +192,18 @@ impl<'a> Lexer<'a> {
                     if edgeop {
                         self.bump();
                         self.bump();
-                        tokens.push(Token { tok: Tok::EdgeOp, line, column });
+                        tokens.push(Token {
+                            tok: Tok::EdgeOp,
+                            line,
+                            column,
+                        });
                     } else {
                         self.bump();
-                        tokens.push(Token { tok: Tok::Char('-'), line, column });
+                        tokens.push(Token {
+                            tok: Tok::Char('-'),
+                            line,
+                            column,
+                        });
                     }
                 }
                 _ => {
@@ -209,7 +239,11 @@ impl<'a> Lexer<'a> {
                         });
                     } else {
                         self.bump();
-                        tokens.push(Token { tok: Tok::Char(c), line, column });
+                        tokens.push(Token {
+                            tok: Tok::Char(c),
+                            line,
+                            column,
+                        });
                     }
                 }
             }
@@ -241,7 +275,9 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     loop {
                         match self.bump() {
-                            None => return Err(self.error(line, column, "unterminated /* comment")),
+                            None => {
+                                return Err(self.error(line, column, "unterminated /* comment"));
+                            }
                             Some('*') if self.peek() == Some('/') => {
                                 self.bump();
                                 break;
@@ -294,7 +330,11 @@ impl<'a> Lexer<'a> {
         loop {
             match self.bump() {
                 None => {
-                    return Err(self.error(line, column, "scanning a quoted string (missing endquote?)"))
+                    return Err(self.error(
+                        line,
+                        column,
+                        "scanning a quoted string (missing endquote?)",
+                    ));
                 }
                 Some('"') => break,
                 Some('\\') => match self.bump() {
@@ -310,9 +350,11 @@ impl<'a> Lexer<'a> {
                         out.push(c);
                     }
                     None => {
-                        return Err(
-                            self.error(line, column, "scanning a quoted string (missing endquote?)")
-                        )
+                        return Err(self.error(
+                            line,
+                            column,
+                            "scanning a quoted string (missing endquote?)",
+                        ));
                     }
                 },
                 Some(c) => out.push(c),
@@ -331,8 +373,11 @@ impl<'a> Lexer<'a> {
         loop {
             match self.bump() {
                 None => {
-                    return Err(self
-                        .error(line, column, "scanning a HTML string (missing '>'? bad nesting?)"))
+                    return Err(self.error(
+                        line,
+                        column,
+                        "scanning a HTML string (missing '>'? bad nesting?)",
+                    ));
                 }
                 Some('>') => {
                     nest -= 1;
@@ -401,9 +446,7 @@ impl<'a> Lexer<'a> {
                 // letter, splits the token — rewind one character.
                 let ends_dot = out.ends_with('.');
                 let ends_letter = out.ends_with(is_name_start);
-                if (ends_dot && out[..out.len() - 1].contains('.'))
-                    || (ends_letter && !ends_dot)
-                {
+                if (ends_dot && out[..out.len() - 1].contains('.')) || (ends_letter && !ends_dot) {
                     out.pop();
                     self.pos -= 1;
                     self.column -= 1;
@@ -413,7 +456,10 @@ impl<'a> Lexer<'a> {
         }
         // NAME: LETTER (LETTER|DIGIT)* — started with a letter/underscore/
         // high char (we only get here with a letter start).
-        while self.peek().is_some_and(|c| is_name_start(c) || c.is_ascii_digit()) {
+        while self
+            .peek()
+            .is_some_and(|c| is_name_start(c) || c.is_ascii_digit())
+        {
             out.push(self.bump().unwrap());
         }
         Ok((out, AtomKind::Plain))
@@ -699,12 +745,16 @@ impl Parser {
             }
             1 => {
                 for attr in attrs {
-                    self.graph.default_node_attrs.insert(attr.name.clone(), attr.value);
+                    self.graph
+                        .default_node_attrs
+                        .insert(attr.name.clone(), attr.value);
                 }
             }
             _ => {
                 for attr in attrs {
-                    self.graph.default_edge_attrs.insert(attr.name.clone(), attr.value);
+                    self.graph
+                        .default_edge_attrs
+                        .insert(attr.name.clone(), attr.value);
                 }
             }
         }
@@ -724,7 +774,9 @@ impl Parser {
         let mut attrs = Vec::new();
         while *self.peek() == Tok::Char('[') {
             self.attrlist()?;
-            attrs.extend(std::mem::take(&mut self.frames.last_mut().unwrap().attrlist));
+            attrs.extend(std::mem::take(
+                &mut self.frames.last_mut().unwrap().attrlist,
+            ));
         }
         if is_edge {
             self.endedge(elems, attrs)?;
@@ -845,7 +897,11 @@ impl Parser {
             self.expect_char('=')?;
             let (value, kind) = self.atom()?;
             let html = kind == AtomKind::Html;
-            self.frames.last_mut().unwrap().attrlist.push(RawAttr { name, value, html });
+            self.frames
+                .last_mut()
+                .unwrap()
+                .attrlist
+                .push(RawAttr { name, value, html });
             // optseparator : ';' | ',' | /* empty */
             if !self.eat_char(',') && !self.eat_char(';') {
                 // empty separator: the next token must open another group or
@@ -874,7 +930,9 @@ impl Parser {
     }
 
     fn apply_node_attr(&mut self, node: usize, attr: &RawAttr) {
-        self.graph.nodes[node].attrs.insert(attr.name.clone(), attr.value.clone());
+        self.graph.nodes[node]
+            .attrs
+            .insert(attr.name.clone(), attr.value.clone());
         if attr.html {
             self.graph.nodes[node].html_attrs.insert(attr.name.clone());
         }
@@ -909,12 +967,12 @@ impl Parser {
     /// contribute their member nodes, without ports (grammar.y).
     fn expand_elem(&self, elem: &Elem) -> Vec<(usize, Option<Port>)> {
         match elem {
-            Elem::Nodes(nodes) => {
-                nodes.iter().map(|nr| (nr.node, nr.port.clone())).collect()
-            }
-            Elem::Subgraph(sg) => {
-                self.graph.subgraphs[*sg].nodes.iter().map(|&n| (n, None)).collect()
-            }
+            Elem::Nodes(nodes) => nodes.iter().map(|nr| (nr.node, nr.port.clone())).collect(),
+            Elem::Subgraph(sg) => self.graph.subgraphs[*sg]
+                .nodes
+                .iter()
+                .map(|&n| (n, None))
+                .collect(),
         }
     }
 
@@ -935,9 +993,11 @@ impl Parser {
         }
 
         let existing = match self.graph.kind {
-            GraphKind::Undirected => self.graph.edges.iter().position(|e| {
-                (e.tail == t && e.head == h) || (e.tail == h && e.head == t)
-            }),
+            GraphKind::Undirected => self
+                .graph
+                .edges
+                .iter()
+                .position(|e| (e.tail == t && e.head == h) || (e.tail == h && e.head == t)),
             GraphKind::Directed if self.graph.strict => self
                 .graph
                 .edges
@@ -988,10 +1048,7 @@ impl Parser {
             }
         }
         // Explicit `tailport=`/`headport=` attributes win over `:port`.
-        for (attr, slot) in [
-            ("tailport", true),
-            ("headport", false),
-        ] {
+        for (attr, slot) in [("tailport", true), ("headport", false)] {
             if let Some(value) = self.graph.edges[index].attrs.get(attr) {
                 let port = Port::new(value.clone());
                 if slot {
@@ -1006,11 +1063,15 @@ impl Parser {
 
     fn set_ports(&mut self, edge: usize, tail: Option<Port>, head: Option<Port>) {
         if let Some(port) = tail {
-            self.graph.edges[edge].attrs.insert("tailport".into(), port.raw.clone());
+            self.graph.edges[edge]
+                .attrs
+                .insert("tailport".into(), port.raw.clone());
             self.graph.edges[edge].tail_port = Some(port);
         }
         if let Some(port) = head {
-            self.graph.edges[edge].attrs.insert("headport".into(), port.raw.clone());
+            self.graph.edges[edge]
+                .attrs
+                .insert("headport".into(), port.raw.clone());
             self.graph.edges[edge].head_port = Some(port);
         }
     }
@@ -1128,8 +1189,7 @@ mod tests {
     #[test]
     fn subgraph_name_reuse_merges() {
         let g = parse_ok("digraph { subgraph cluster_c { a; } subgraph cluster_c { b; } }");
-        let clusters: Vec<usize> = g
-            .subgraphs[0]
+        let clusters: Vec<usize> = g.subgraphs[0]
             .children
             .iter()
             .copied()
@@ -1142,9 +1202,18 @@ mod tests {
     #[test]
     fn defaults_and_html_labels() {
         let g = parse_ok(r#"digraph { node [shape=box]; a [label="Hello"]; b [label=<B>]; }"#);
-        assert_eq!(g.nodes[0].attrs.get("shape").map(String::as_str), Some("box"));
-        assert_eq!(g.nodes[1].attrs.get("shape").map(String::as_str), Some("box"));
-        assert_eq!(g.nodes[0].attrs.get("label").map(String::as_str), Some("Hello"));
+        assert_eq!(
+            g.nodes[0].attrs.get("shape").map(String::as_str),
+            Some("box")
+        );
+        assert_eq!(
+            g.nodes[1].attrs.get("shape").map(String::as_str),
+            Some("box")
+        );
+        assert_eq!(
+            g.nodes[0].attrs.get("label").map(String::as_str),
+            Some("Hello")
+        );
         assert!(g.nodes[1].label_is_html());
         assert_eq!(g.nodes[1].attrs.get("label").map(String::as_str), Some("B"));
     }
@@ -1152,7 +1221,10 @@ mod tests {
     #[test]
     fn qatom_concatenation() {
         let g = parse_ok(r#"digraph { a [label="x" + "y"]; }"#);
-        assert_eq!(g.nodes[0].attrs.get("label").map(String::as_str), Some("xy"));
+        assert_eq!(
+            g.nodes[0].attrs.get("label").map(String::as_str),
+            Some("xy")
+        );
     }
 
     #[test]
@@ -1174,7 +1246,10 @@ mod tests {
     #[test]
     fn graph_attr_on_subgraph() {
         let g = parse_ok("digraph { rankdir=LR; subgraph cluster_c { label=\"box\"; a; } }");
-        assert_eq!(g.graph_attrs().get("rankdir").map(String::as_str), Some("LR"));
+        assert_eq!(
+            g.graph_attrs().get("rankdir").map(String::as_str),
+            Some("LR")
+        );
         let c = g.subgraphs.iter().find(|s| s.name == "cluster_c").unwrap();
         assert_eq!(c.attrs.get("label").map(String::as_str), Some("box"));
     }
@@ -1183,7 +1258,11 @@ mod tests {
     fn edge_attrs_apply_to_all_expanded_edges() {
         let g = parse_ok("digraph { a -> { b c } [label=L]; }");
         assert_eq!(g.edges.len(), 2);
-        assert!(g.edges.iter().all(|e| e.attrs.get("label").map(String::as_str) == Some("L")));
+        assert!(
+            g.edges
+                .iter()
+                .all(|e| e.attrs.get("label").map(String::as_str) == Some("L"))
+        );
     }
 
     #[test]
@@ -1221,4 +1300,3 @@ mod tests {
         assert_eq!(g.edges[0].head_port.as_ref().unwrap().raw, "bottom");
     }
 }
-

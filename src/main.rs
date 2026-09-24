@@ -1,22 +1,3 @@
-//! `dotv` — a DOT graph visualizer built with GPUI and GPUI Kit.
-//!
-//! Layered, one concern per module:
-//!
-//! - [`graph`] — the data layer: DOT parsing into the [`crate::graph::Graph`]
-//!   structure;
-//! - [`document`] — the application document: a loaded graph bundled with its
-//!   measurements, layout and drag offsets;
-//! - [`viz`] — the visualization layer: graphic primitives, layout, the
-//!   world↔screen transform, pointer interaction and painting, composed into
-//!   a self-drawn canvas element;
-//! - [`settings`] — the settings model, the generic settings card and the
-//!   app's settings rows;
-//! - [`ui`] — the application chrome (title bar, zoom controls, status bar);
-//! - [`app`] — the root view that owns the state and wires it all together;
-//! - [`actions`] / [`fonts`] — global keybindings and the embedded typeface.
-//!
-//! Usage: `dotv [file.dot]` — see `dotv --help` for the headless modes.
-
 mod actions;
 mod app;
 mod document;
@@ -25,12 +6,14 @@ mod dump;
 mod file_dialog;
 mod fonts;
 mod graph;
+mod icons;
 mod settings;
 mod svgdump;
 mod ui;
 mod viz;
 
 use std::path::PathBuf;
+use tikv_jemallocator::Jemalloc;
 
 use clap::Parser as _;
 use gpui_kit::component::{Root, TitleBar};
@@ -39,26 +22,8 @@ use gpui_kit::{
     WindowOptions, point, px, size,
 };
 
-gpui_kit::assets::icon_assets!(
-    AppAssets,
-    [
-        AlignCenterHorizontal,
-        AlignCenterVertical,
-        Baseline,
-        FolderOpen,
-        Frame,
-        Maximize,
-        Minus,
-        Plus,
-        Settings,
-        SquareText,
-        Undo2,
-        WindowClose,
-        WindowMaximize,
-        WindowMinimize,
-        WindowRestore,
-    ]
-);
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(clap::Parser, Debug)]
 #[command(
@@ -111,7 +76,7 @@ fn main() {
     let file = cli.file;
 
     gpui_kit::application()
-        .with_assets(AppAssets)
+        .with_assets(icons::AppAssets)
         .run(move |cx: &mut App| {
             fonts::register(cx);
             gpui_kit::init(cx);

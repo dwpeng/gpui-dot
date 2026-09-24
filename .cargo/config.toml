@@ -1,0 +1,2 @@
+[build]
+rustflags = ["-C", "target-cpu=native", "-Zthreads=0", "-Zshare-generics=y"]

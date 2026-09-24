@@ -15,15 +15,21 @@ fn label_plain(graph: &crate::graph::model::Graph, index: usize, raw: &str) -> S
     if lines.is_empty() {
         return raw.to_string();
     }
-    lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")
+    lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The edge's label with escapes processed.
 fn label_plain_edge(graph: &crate::graph::model::Graph, index: usize, raw: &str) -> String {
     match graph.edge_label_lines(index) {
-        Some(lines) if !lines.is_empty() => {
-            lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")
-        }
+        Some(lines) if !lines.is_empty() => lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => raw.to_string(),
     }
 }
@@ -132,7 +138,10 @@ pub fn run_with_sizes(path: &Path, sizes: Option<&Path>) {
     let layout = dotgen::layout(&graph, &measured);
 
     println!("{{");
-    println!("  \"directed\": {},", graph.kind == crate::graph::model::GraphKind::Directed);
+    println!(
+        "  \"directed\": {},",
+        graph.kind == crate::graph::model::GraphKind::Directed
+    );
     println!("  \"nodes\": [");
     for (i, node) in graph.nodes.iter().enumerate() {
         let (x, y) = (layout.coords[i].x, layout.coords[i].y);
@@ -159,11 +168,22 @@ pub fn run_with_sizes(path: &Path, sizes: Option<&Path>) {
         let comma = if i + 1 < layout.edges.len() { "," } else { "" };
         println!(
             "    {{ \"tail\": {}, \"head\": {}, \"sflag\": {}, \"eflag\": {}, \"sp\": [{:.2},{:.2}], \"ep\": [{:.2},{:.2}], \"label\": {}, \"label_pos\": [{:.2},{:.2}], \"segs\": [{}] }}{}",
-            e.tail, e.head, e.sflag, e.eflag, e.sp.x, e.sp.y, e.ep.x, e.ep.y,
-            e.label.as_ref().map(|l| format!("{:?}", l.text)).unwrap_or_else(|| "null".into()),
+            e.tail,
+            e.head,
+            e.sflag,
+            e.eflag,
+            e.sp.x,
+            e.sp.y,
+            e.ep.x,
+            e.ep.y,
+            e.label
+                .as_ref()
+                .map(|l| format!("{:?}", l.text))
+                .unwrap_or_else(|| "null".into()),
             e.label.as_ref().map(|l| l.pos.x).unwrap_or(0.0),
             e.label.as_ref().map(|l| l.pos.y).unwrap_or(0.0),
-            segs.join(","), comma
+            segs.join(","),
+            comma
         );
     }
     println!("  ]");

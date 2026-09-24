@@ -691,7 +691,9 @@ static NAMED: &[(&str, u32)] = &[
 /// 0 (`none`, `transparent`) resolve to `None`.
 pub(crate) fn lookup(name: &str) -> Option<Hsla> {
     let lower = name.to_lowercase();
-    let idx = NAMED.binary_search_by(|(n, _)| (*n).cmp(lower.as_str())).ok()?;
+    let idx = NAMED
+        .binary_search_by(|(n, _)| (*n).cmp(lower.as_str()))
+        .ok()?;
     let (_, rgba) = NAMED[idx];
     if rgba & 0xff == 0 {
         return None;

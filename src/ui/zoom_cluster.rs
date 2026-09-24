@@ -3,12 +3,12 @@
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::{ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Styled, div};
 
 use crate::app::GraphView;
+use crate::icons::IconName;
 
-/// Renders the zoom cluster for `view`.
 pub fn zoom_cluster(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoElement {
     let theme = cx.theme();
     div()
@@ -28,7 +28,7 @@ pub fn zoom_cluster(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoE
         .occlude()
         .child(
             Button::new("zoom-out")
-                .icon(IconName::Minus)
+                .icon(IconName::ZoomOut)
                 .ghost()
                 .xsmall()
                 .tooltip("Zoom out (Ctrl+-)")
@@ -40,11 +40,14 @@ pub fn zoom_cluster(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoE
                 .text_center()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(format!("{}%", (view.zoom * 100.0).round() as i32)),
+                .child(format!(
+                    "{}%",
+                    (view.active().map_or(1.0, |tab| tab.zoom) * 100.0).round() as i32
+                )),
         )
         .child(
             Button::new("zoom-in")
-                .icon(IconName::Plus)
+                .icon(IconName::ZoomIn)
                 .ghost()
                 .xsmall()
                 .tooltip("Zoom in (Ctrl+=)")
@@ -52,7 +55,7 @@ pub fn zoom_cluster(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoE
         )
         .child(
             Button::new("fit")
-                .icon(IconName::Maximize)
+                .icon(IconName::FitView)
                 .ghost()
                 .xsmall()
                 .tooltip("Fit to window (Ctrl+0)")
@@ -63,12 +66,12 @@ pub fn zoom_cluster(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoE
         // them), so the escape hatch sits with the other view controls.
         .child(
             Button::new("reset-positions")
-                .icon(IconName::Undo2)
+                .icon(IconName::ResetLayout)
                 .ghost()
                 .xsmall()
                 .tooltip("Reset moved nodes to their layout positions")
-                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                    this.reset_positions(cx)
-                })),
+                .on_click(
+                    cx.listener(|this, _: &ClickEvent, _window, cx| this.reset_positions(cx)),
+                ),
         )
 }

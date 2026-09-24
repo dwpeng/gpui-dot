@@ -27,7 +27,7 @@ use super::classes::{
     merge_chain, merge_oneway, mergeable, other_edge, ports_eq, safe_other_edge, virtual_edge,
     virtual_node,
 };
-use super::model::{EdgeType, EId, Fg, GId, NId, NodeType};
+use super::model::{EId, EdgeType, Fg, GId, NId, NodeType};
 use super::position::rank_row_index;
 
 /// `NULL` slot sentinel (`mincross::NO_NODE`).
@@ -47,28 +47,35 @@ fn row_offset(fg: &Fg, g: GId, r: i32) -> Option<usize> {
 
 /// Mirrors a write to the root's row `r` into every expanded cluster whose
 /// slice covers it — the Rust stand-in for C's pointer aliasing.
+///
+/// `MinCross::exchange` calls this once per swap, so the cluster-free case
+/// (by far the most common) must be O(1), and the copy must touch only the
+/// cluster's own slice — never a clone of the whole root row.
 pub fn refresh_expanded_clusters(fg: &mut Fg, r: i32) {
     let root = fg.root_g();
+    if fg.graphs[root].clust.is_empty() {
+        return; // no clusters ⇒ no expanded slices
+    }
     let root_slot = rank_row_index(fg, root, r);
     if root_slot >= fg.graphs[root].rank.len() {
         return;
     }
-    for g in 1..fg.graphs.len() {
-        let Some(ipos) = row_offset(fg, g, r) else {
+    for gi in 1..fg.graphs.len() {
+        let Some(ipos) = row_offset(fg, gi, r) else {
             continue;
         };
-        let slot = rank_row_index(fg, g, r);
-        let d = fg.graphs[g].rank[slot].n;
+        let slot = rank_row_index(fg, gi, r);
+        let d = fg.graphs[gi].rank[slot].n;
         if d == 0 {
             continue;
         }
-        let src: Vec<NId> = fg.graphs[root].rank[root_slot].v.clone();
-        let row = &mut fg.graphs[g].rank[slot].v;
-        for i in 0..d {
-            if let Some(&v) = src.get(ipos + i) {
-                row[i] = v;
-            }
-        }
+        // copy only the `d`-element slice (C aliases the same slots)
+        let root_len = fg.graphs[root].rank[root_slot].v.len();
+        let take = d.min(root_len.saturating_sub(ipos));
+        let src: Vec<NId> = fg.graphs[root].rank[root_slot].v[ipos..ipos + take].to_vec();
+        let row = &mut fg.graphs[gi].rank[slot].v;
+        let take = take.min(row.len());
+        row[..take].copy_from_slice(&src[..take]);
     }
 }
 

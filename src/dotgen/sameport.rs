@@ -10,8 +10,8 @@
 //! group — including the virtual edges of each original's chain, so the
 //! routing and the arrows agree.
 
-use super::geom::{round, PointF};
-use super::model::{EId, Fg, GId, NId, NodeType, Port, MC_SCALE};
+use super::geom::{PointF, round};
+use super::model::{EId, Fg, GId, MC_SCALE, NId, NodeType, Port};
 use super::splines::shape_clip0;
 
 /// `dot_sameports` (sameport.c:43-88) — merge the ports of `samehead` /

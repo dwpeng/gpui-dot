@@ -168,7 +168,10 @@ pub fn dot_position(fg: &mut Fg, g: GId) -> Result<(), i32> {
     let mut t = std::time::Instant::now();
     let mut lap = |fg: &Fg, name: &str| {
         if timing {
-            eprintln!("[timing]   position::{name}: {:.3}s", t.elapsed().as_secs_f64());
+            eprintln!(
+                "[timing]   position::{name}: {:.3}s",
+                t.elapsed().as_secs_f64()
+            );
             t = std::time::Instant::now();
         }
         let _ = fg;
@@ -326,13 +329,16 @@ fn self_right_space(fg: &Fg, e: EId) -> f64 {
     let hp = &fg.edges[e].head_port;
     let on_left = tp.side & SIDE_LEFT != 0 || hp.side & SIDE_LEFT != 0;
     let cond = (!tp.defined && !hp.defined)
-        || (!on_left
-            && (tp.side != hp.side || (tp.side & (SIDE_TOP | SIDE_BOTTOM)) == 0));
+        || (!on_left && (tp.side != hp.side || (tp.side & (SIDE_TOP | SIDE_BOTTOM)) == 0));
     if cond {
         let mut sw = SELF_EDGE_SIZE;
         if let Some(l) = fg.edges[e].label {
             let d = fg.labels[l].dimen;
-            sw += if fg.graphs[fg.root_g()].rankdir.flip() { d.y } else { d.x };
+            sw += if fg.graphs[fg.root_g()].rankdir.flip() {
+                d.y
+            } else {
+                d.x
+            };
         }
         sw
     } else {
@@ -418,13 +424,12 @@ fn make_lr_constraints(fg: &mut Fg, g: GId) -> Result<(), i32> {
                 let e0 = fg.nodes[u].save_out[0];
                 let e1 = fg.nodes[u].save_out[1];
                 // position.c:280-282 — e0 = the LEFT flat endpoint
-                let (e0, e1) = if fg.nodes[fg.edges[e0].head].order
-                    > fg.nodes[fg.edges[e1].head].order
-                {
-                    (e1, e0)
-                } else {
-                    (e0, e1)
-                };
+                let (e0, e1) =
+                    if fg.nodes[fg.edges[e0].head].order > fg.nodes[fg.edges[e1].head].order {
+                        (e1, e0)
+                    } else {
+                        (e0, e1)
+                    };
                 let m0 = fg.edges[e].minlen * nodesep_g / 2; // position.c:283 — int div
                 let (t0, h0) = (fg.edges[e0].tail, fg.edges[e0].head);
                 let m1 = m0 as f64 + fg.nodes[h0].rw + fg.nodes[t0].lw; // position.c:284
@@ -679,7 +684,11 @@ fn compress_graph(fg: &mut Fg, g: GId, state: &mut PosState) {
     }
     contain_nodes(fg, g, state); // position.c:529
     let (ln, rn) = state.ln_rn[&g];
-    let x = if !fg.graphs[g].rankdir.flip() { p.x } else { p.y }; // L530-533
+    let x = if !fg.graphs[g].rankdir.flip() {
+        p.x
+    } else {
+        p.y
+    }; // L530-533
     let x = x.min(USHRT_MAX); // position.c:539
     let _ = make_aux_edge(fg, ln, rn, x, 1000); // position.c:540
 }
@@ -767,13 +776,10 @@ fn adjust_simple(fg: &mut Fg, g: GId, delta: f64, margin_total: i32) {
             }
             r -= 1;
         }
-        deltop = fg.graphs[g].ht2
-            + (delta - bottom)
-            + delbottom
+        deltop = fg.graphs[g].ht2 + (delta - bottom) + delbottom
             - (rank_row(fg, root, minr).ht2 - margin_total as f64);
     } else {
-        deltop = fg.graphs[g].ht2
-            + (delta - bottom)
+        deltop = fg.graphs[g].ht2 + (delta - bottom)
             - (rank_row(fg, root, minr).ht2 - margin_total as f64);
     }
     if deltop > 0.0 {
@@ -956,14 +962,8 @@ fn set_ycoords(fg: &mut Fg, g: GId, state: &PosState) {
         }
         // C L805-806: d0 uses the primitive heights (`pht`), d1 the
         // cluster/label-augmented ones (`ht`).
-        let (pht2_next, pht1_cur) = (
-            rank_row(fg, g, r + 1).pht2,
-            rank_row(fg, g, r).pht1,
-        );
-        let (ht2_next, ht1_cur) = (
-            rank_row(fg, g, r + 1).ht2,
-            rank_row(fg, g, r).ht1,
-        );
+        let (pht2_next, pht1_cur) = (rank_row(fg, g, r + 1).pht2, rank_row(fg, g, r).pht1);
+        let (ht2_next, ht1_cur) = (rank_row(fg, g, r + 1).ht2, rank_row(fg, g, r).ht1);
         let d0 = pht2_next + pht1_cur + fg.graphs[g].ranksep as f64; // L805 — prim sep
         let d1 = ht2_next + ht1_cur + CL_OFFSET; // L806 — cluster sep
         let delta = d0.max(d1);
@@ -1070,8 +1070,12 @@ fn dot_compute_bb(fg: &mut Fg, g: GId, root: GId, state: &PosState) {
         ll_x = fg.nodes[ln].rank as f64; // L895 — simplex x
         ur_x = fg.nodes[rn].rank as f64; // L896 — simplex x
     }
-    let y_bot = fg.nodes[rank_row(fg, root, fg.graphs[g].maxrank).v[0]].coord.y; // L898
-    let y_top = fg.nodes[rank_row(fg, root, fg.graphs[g].minrank).v[0]].coord.y; // L899
+    let y_bot = fg.nodes[rank_row(fg, root, fg.graphs[g].maxrank).v[0]]
+        .coord
+        .y; // L898
+    let y_top = fg.nodes[rank_row(fg, root, fg.graphs[g].minrank).v[0]]
+        .coord
+        .y; // L899
     let ll = PointF::new(ll_x, y_bot - fg.graphs[g].ht1);
     let ur = PointF::new(ur_x, y_top + fg.graphs[g].ht2);
     fg.graphs[g].bb = BoxF { ll, ur }; // L900-901
@@ -1386,7 +1390,7 @@ fn mark_lowcluster_basic(fg: &mut Fg, g: GId) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dotgen::{build, classes, rank, Measured};
+    use crate::dotgen::{Measured, build, classes, rank};
     use crate::graph::parser::parse;
 
     fn approx(a: f64, b: f64) {
@@ -1403,7 +1407,7 @@ mod tests {
             label: Vec::new(),
             node: vec![(54.0, 36.0); graph.nodes.len()],
             edge_label: edge_labels.to_vec(),
-                    measure: None,
+            measure: None,
         };
         let mut fg = build(&graph, &measured);
         rank::dot_rank(&mut fg, 0);
@@ -1425,7 +1429,11 @@ mod tests {
                 fg.nodes[v].order = j as i32;
             }
             let n = row.len();
-            fg.graphs[g].rank.push(Rank { v: row, n, ..Default::default() });
+            fg.graphs[g].rank.push(Rank {
+                v: row,
+                n,
+                ..Default::default()
+            });
         }
     }
 
@@ -1596,7 +1604,10 @@ mod tests {
         approx(fg.graphs[0].rank[2].ht2, 40.0);
         approx(fg.nodes[a].coord.y, fg.nodes[c].coord.y);
         // y(x) - y(a) = (40 + 0.5 + 18) + (0.5 + 18 + 18) = 95
-        approx(fg.nodes[name_id(fg, "x")].coord.y - fg.nodes[a].coord.y, 95.0);
+        approx(
+            fg.nodes[name_id(fg, "x")].coord.y - fg.nodes[a].coord.y,
+            95.0,
+        );
     }
 
     /// `ranksep=equally` (GD_exact_ranksep) re-assigns every rank gap to the

@@ -2,3 +2,5 @@
 *.dot
 *.py
 *.json
+# bench regression artifacts (regenerate from any trusted build)
+benches/baseline/

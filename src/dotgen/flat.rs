@@ -36,7 +36,7 @@
 use super::classes::virtual_edge;
 use super::classes::virtual_node;
 use super::geom::PointF;
-use super::model::{EdgeType, EId, Fg, GId, NId, NodeType};
+use super::model::{EId, EdgeType, Fg, GId, NId, NodeType};
 use super::position::{rank_row, rank_row_mut};
 
 /// `flat.c:41` — hard left bound slot.
@@ -53,11 +53,7 @@ const SRB: usize = 3;
 fn findlr(fg: &Fg, u: NId, v: NId) -> (i32, i32) {
     let l = fg.nodes[u].order;
     let r = fg.nodes[v].order;
-    if l > r {
-        (r, l)
-    } else {
-        (l, r)
-    }
+    if l > r { (r, l) } else { (l, r) }
 }
 
 /// `setbounds` (flat.c:58-102) — tighten `bounds` using node `v` on the
@@ -256,7 +252,7 @@ fn abomination(fg: &mut Fg, g: GId) {
         flat: None,    // flat.c:198
         ht1: 1.0,      // flat.c:199
         ht2: 1.0,
-        pht1: 1.0,     // flat.c:200
+        pht1: 1.0, // flat.c:200
         pht2: 1.0,
         // flat.c:200 — pht1 = pht2 = 1; the arena has no pht fields (they
         // coincide with ht1/ht2 at every read — see position.rs).
@@ -458,11 +454,7 @@ pub fn edge_dist(fg: &Fg, e: EId, flip: bool) -> f64 {
     let label_width = |eid: EId| -> Option<f64> {
         fg.edges[eid].label.map(|l| {
             let d = fg.labels[l].dimen;
-            if flip {
-                d.y
-            } else {
-                d.x
-            }
+            if flip { d.y } else { d.x }
         })
     };
     // flat.c:302 — the representative's own width (0 when unlabeled)

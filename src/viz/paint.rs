@@ -7,13 +7,11 @@
 use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
-use gpui_kit::{
-    App, Bounds, Hsla, Pixels, Point, SharedString, Window, point, px, size,
-};
+use gpui_kit::{App, Bounds, Hsla, Pixels, Point, SharedString, Window, point, px, size};
 
 use crate::document::Document;
-use crate::viz::layout::NodeBox;
 use crate::viz::dotview::{ArrowPart, NodeShape, ViewEdge, ViewLabel, ViewNode};
+use crate::viz::layout::NodeBox;
 
 use super::primitives;
 use super::transform::{ViewTransform, grid_step};
@@ -107,7 +105,12 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
     let node_box = |i: usize| -> NodeBox {
         let n = &document.view.nodes[i];
         let (dx, dy) = offsets.get(i).copied().unwrap_or((0.0, 0.0));
-        NodeBox { x: n.x + dx, y: n.y + dy, w: n.w, h: n.h }
+        NodeBox {
+            x: n.x + dx,
+            y: n.y + dy,
+            w: n.w,
+            h: n.h,
+        }
     };
 
     // Clusters sit behind everything.
@@ -163,7 +166,11 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
             continue;
         }
         let width = px((edge.penwidth * transform.zoom).max(hairline));
-        let colors: &[Hsla] = if edge.color.a > 0.0 { &edge.colors } else { &fallback };
+        let colors: &[Hsla] = if edge.color.a > 0.0 {
+            &edge.colors
+        } else {
+            &fallback
+        };
         paint_edge(edge, frame, width, colors, window);
     }
     for edge in edges.iter() {
@@ -195,15 +202,7 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
             continue;
         }
         paint_node(
-            frame,
-            index,
-            node,
-            &box_,
-            popover,
-            border,
-            primary,
-            window,
-            cx,
+            frame, index, node, &box_, popover, border, primary, window, cx,
         );
     }
     if let Some(drag) = frame.node_drag
@@ -300,7 +299,12 @@ fn paint_edge(
         return;
     }
     for (i, s) in edge.segments.iter().enumerate() {
-        primitives::stroke_splines(window, std::iter::once(seg4(s)), width, colors[i % colors.len()]);
+        primitives::stroke_splines(
+            window,
+            std::iter::once(seg4(s)),
+            width,
+            colors[i % colors.len()],
+        );
     }
 }
 
@@ -472,7 +476,9 @@ fn paint_node(
                     } else {
                         (px(5.0), px(4.0))
                     };
-                    primitives::dashed_rounded_rect(window, bounds, radius, width, dash, gap, stroke);
+                    primitives::dashed_rounded_rect(
+                        window, bounds, radius, width, dash, gap, stroke,
+                    );
                 } else {
                     primitives::rounded_rect(
                         window,
@@ -524,7 +530,14 @@ fn paint_node(
                     } else {
                         (px(5.0), px(4.0))
                     };
-                    primitives::stroke_dashed_ellipse(window, ring_bounds, width, dash, gap, stroke);
+                    primitives::stroke_dashed_ellipse(
+                        window,
+                        ring_bounds,
+                        width,
+                        dash,
+                        gap,
+                        stroke,
+                    );
                 } else if is_circle {
                     primitives::rounded_rect(
                         window,
@@ -652,7 +665,9 @@ fn paint_label(
     let scale = frame.label_scale;
     let font_size = px(label.font_size * scale * transform.zoom);
     let line_height = px(label.font_size * scale * transform.zoom * 1.2);
-    let color = color_override.or(label.color).unwrap_or_else(|| cx.theme().foreground);
+    let color = color_override
+        .or(label.color)
+        .unwrap_or_else(|| cx.theme().foreground);
     let lines: Vec<&str> = label.text.split('\n').collect();
     let shaped: Vec<gpui_kit::ShapedLine> = lines
         .iter()

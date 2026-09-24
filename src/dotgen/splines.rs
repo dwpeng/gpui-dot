@@ -5,7 +5,7 @@
 //! final endpoint clipping + arrow adjustments (`clip_and_install`).
 
 use super::arrows::{arrow_clip, bezier_eval};
-use super::geom::{approx_eqpt, BoxF, PointF};
+use super::geom::{BoxF, PointF, approx_eqpt};
 
 fn approx_eqpt_milli(a: PointF, b: PointF) -> bool {
     approx_eqpt(a, b) || (a.x - b.x).abs() < MILLIPOINT && (a.y - b.y).abs() < MILLIPOINT
@@ -174,7 +174,12 @@ fn limit_boxes(boxes: &mut [BoxF], pps: &[PointF], delta: f64) {
     let num_div = delta * boxn as f64;
     let mut splinepi = 0;
     while splinepi + 3 < pn {
-        let sp0 = [pps[splinepi], pps[splinepi + 1], pps[splinepi + 2], pps[splinepi + 3]];
+        let sp0 = [
+            pps[splinepi],
+            pps[splinepi + 1],
+            pps[splinepi + 2],
+            pps[splinepi + 3],
+        ];
         for si in 0..=(num_div as usize) {
             let t = si as f64 / num_div;
             let mut sp = sp0;
@@ -435,10 +440,7 @@ pub fn shape_inside_bp(fg: &Fg, n: NId, bp: Option<super::geom::BoxF>, p: PointF
     } else {
         node.shape_info.kind.as_str()
     };
-    let desc = super::shapes::resolved_desc(
-        &super::shapes::shape_of(kind),
-        &node.shape_info,
-    );
+    let desc = super::shapes::resolved_desc(&super::shapes::shape_of(kind), &node.shape_info);
     // The cached `poly_init` vertices were built from the *unflipped* box;
     // for LR/BT the layout frame swaps a node's dimensions, so drop the cache
     // and let the test rebuild the rings from the current lw/rw/ht — the very
@@ -449,7 +451,13 @@ pub fn shape_inside_bp(fg: &Fg, n: NId, bp: Option<super::geom::BoxF>, p: PointF
 }
 
 /// splines.c `shape_clip0` — clip the curve's start to the node boundary.
-pub(crate) fn shape_clip0(fg: &Fg, n: NId, curve: &mut [PointF; 4], coord: PointF, left_inside: bool) {
+pub(crate) fn shape_clip0(
+    fg: &Fg,
+    n: NId,
+    curve: &mut [PointF; 4],
+    coord: PointF,
+    left_inside: bool,
+) {
     // node-relative coordinates
     for p in curve.iter_mut() {
         p.x -= coord.x;
@@ -507,16 +515,10 @@ pub fn clip_and_install(
     // off for that end: the endpoint must stay exactly on the port, not be
     // pulled back to wherever the spline happens to cross the outline.
     let (clip_tail, clip_head) = if tn == fg.edges[orig].tail {
-        (
-            fg.edges[orig].tail_port.clip,
-            fg.edges[orig].head_port.clip,
-        )
+        (fg.edges[orig].tail_port.clip, fg.edges[orig].head_port.clip)
     } else {
         // the fast edge runs opposite to the original
-        (
-            fg.edges[orig].head_port.clip,
-            fg.edges[orig].tail_port.clip,
-        )
+        (fg.edges[orig].head_port.clip, fg.edges[orig].tail_port.clip)
     };
 
     // tail-end shape clipping

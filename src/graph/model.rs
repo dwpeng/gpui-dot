@@ -97,7 +97,10 @@ pub fn label_lines(text: &str) -> Vec<LabelLine> {
         if c == '\\' {
             match chars.next() {
                 Some(j @ ('n' | 'l' | 'r')) => {
-                    lines.push(LabelLine { text: std::mem::take(&mut cur), just: j });
+                    lines.push(LabelLine {
+                        text: std::mem::take(&mut cur),
+                        just: j,
+                    });
                 }
                 // Drop the backslash, keep the escaped character (this is how
                 // `\"` and `\\` are handled).
@@ -105,13 +108,19 @@ pub fn label_lines(text: &str) -> Vec<LabelLine> {
                 None => {}
             }
         } else if c == '\n' {
-            lines.push(LabelLine { text: std::mem::take(&mut cur), just: 'n' });
+            lines.push(LabelLine {
+                text: std::mem::take(&mut cur),
+                just: 'n',
+            });
         } else {
             cur.push(c);
         }
     }
     if !cur.is_empty() {
-        lines.push(LabelLine { text: cur, just: 'n' });
+        lines.push(LabelLine {
+            text: cur,
+            just: 'n',
+        });
     }
     lines
 }
@@ -322,7 +331,10 @@ impl Graph {
 
     /// A subgraph's (cluster's) label lines.
     pub fn subgraph_label_lines(&self, sg: usize) -> Option<Vec<LabelLine>> {
-        let raw = self.subgraphs[sg].attrs.get("label").filter(|l| !l.is_empty())?;
+        let raw = self.subgraphs[sg]
+            .attrs
+            .get("label")
+            .filter(|l| !l.is_empty())?;
         let g = self.name.clone().unwrap_or_default();
         Some(label_lines(&subst_label(raw, &g, "", "", "", "", raw)))
     }
@@ -358,7 +370,10 @@ mod label_tests {
     /// `tail->head` for a directed edge.
     #[test]
     fn object_escapes_are_substituted() {
-        assert_eq!(subst_label(r"\N in \G", "G", "n0", "", "", "", ""), "n0 in G");
+        assert_eq!(
+            subst_label(r"\N in \G", "G", "n0", "", "", "", ""),
+            "n0 in G"
+        );
         assert_eq!(subst_label(r"\E", "G", "", "", "a", "b", ""), "a->b");
         assert_eq!(subst_label(r"\T \H", "G", "", "", "a", "b", ""), "a b");
         assert_eq!(subst_label(r"\L", "G", "", "", "", "", "lab"), "lab");
@@ -369,6 +384,9 @@ mod label_tests {
         // Unknown escapes pass through for `make_simple_label`.
         assert_eq!(subst_label(r"\q", "G", "n0", "", "", "", ""), r"\q");
         // `\n` is a line break, not a substitution.
-        assert_eq!(subst_label(r"one\ntwo", "G", "n0", "", "", "", ""), r"one\ntwo");
+        assert_eq!(
+            subst_label(r"one\ntwo", "G", "n0", "", "", "", ""),
+            r"one\ntwo"
+        );
     }
 }

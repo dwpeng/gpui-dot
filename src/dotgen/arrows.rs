@@ -69,22 +69,31 @@ fn hypot(x: f64, y: f64) -> f64 {
 
 /// `miter_shape` (arrows.c) — the SVG line-join triangle at a stroke join.
 fn miter_shape(base_left: PointF, p: PointF, base_right: PointF, penwidth: f64) -> [PointF; 3] {
-    if (base_left.x == p.x && base_left.y == p.y)
-        || (base_right.x == p.x && base_right.y == p.y)
-    {
+    if (base_left.x == p.x && base_left.y == p.y) || (base_right.x == p.x && base_right.y == p.y) {
         return [p, p, p];
     }
     let dx_a = p.x - base_left.x;
     let dy_a = p.y - base_left.y;
     let hypot_a = hypot(dx_a, dy_a);
     let cos_alpha = dx_a / hypot_a;
-    let alpha = if dy_a > 0.0 { cos_alpha.acos() } else { -cos_alpha.acos() };
-    let p1 = PointF::new(p.x - penwidth / 2.0 * alpha.sin(), p.y + penwidth / 2.0 * cos_alpha);
+    let alpha = if dy_a > 0.0 {
+        cos_alpha.acos()
+    } else {
+        -cos_alpha.acos()
+    };
+    let p1 = PointF::new(
+        p.x - penwidth / 2.0 * alpha.sin(),
+        p.y + penwidth / 2.0 * cos_alpha,
+    );
     let dx_b = base_right.x - p.x;
     let dy_b = base_right.y - p.y;
     let hypot_b = hypot(dx_b, dy_b);
     let cos_beta = dx_b / hypot_b;
-    let beta = if dy_b > 0.0 { cos_beta.acos() } else { -cos_beta.acos() };
+    let beta = if dy_b > 0.0 {
+        cos_beta.acos()
+    } else {
+        -cos_beta.acos()
+    };
     let beta_rev = beta - std::f64::consts::PI;
     let mut theta = beta_rev - alpha;
     if theta <= -std::f64::consts::PI {
@@ -95,7 +104,10 @@ fn miter_shape(base_left: PointF, p: PointF, base_right: PointF, penwidth: f64) 
     let normalized_miter_length = 1.0 / (theta / 2.0).sin();
     let sin_beta_minus_pi = -(dy_b / hypot_b);
     let cos_beta_minus_pi = -(dx_b / hypot_b);
-    let p2 = PointF::new(p.x + penwidth / 2.0 * sin_beta_minus_pi, p.y - penwidth / 2.0 * cos_beta_minus_pi);
+    let p2 = PointF::new(
+        p.x + penwidth / 2.0 * sin_beta_minus_pi,
+        p.y - penwidth / 2.0 * cos_beta_minus_pi,
+    );
     if normalized_miter_length > stroke_miterlimit {
         let pbevel = PointF::new((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0);
         return [pbevel, p1, p2];
@@ -107,7 +119,13 @@ fn miter_shape(base_left: PointF, p: PointF, base_right: PointF, penwidth: f64) 
 
 /// `arrow_type_normal0` — the normal (triangle) arrow; returns the visual
 /// start point q and fills the 5-vertex outline.
-fn arrow_type_normal0(p: PointF, u: PointF, penwidth: f64, flag: u32, a: &mut [PointF; 5]) -> PointF {
+fn arrow_type_normal0(
+    p: PointF,
+    u: PointF,
+    penwidth: f64,
+    flag: u32,
+    a: &mut [PointF; 5],
+) -> PointF {
     let mut arrowwidth = 0.35;
     if penwidth > 4.0 {
         arrowwidth *= penwidth / 4.0;
@@ -116,19 +134,39 @@ fn arrow_type_normal0(p: PointF, u: PointF, penwidth: f64, flag: u32, a: &mut [P
     let mut q = add(p, u);
     let origin = PointF::ZERO;
     let v_inv = scale(-1.0, v);
-    let normal_left = if flag & ARR_MOD_RIGHT != 0 { origin } else { v_inv };
+    let normal_left = if flag & ARR_MOD_RIGHT != 0 {
+        origin
+    } else {
+        v_inv
+    };
     let normal_right = if flag & ARR_MOD_LEFT != 0 { origin } else { v };
-    let base_left = if flag & ARR_MOD_INV != 0 { normal_right } else { normal_left };
-    let base_right = if flag & ARR_MOD_INV != 0 { normal_left } else { normal_right };
+    let base_left = if flag & ARR_MOD_INV != 0 {
+        normal_right
+    } else {
+        normal_left
+    };
+    let base_right = if flag & ARR_MOD_INV != 0 {
+        normal_left
+    } else {
+        normal_right
+    };
     let normal_tip = scale(-1.0, u);
     let inv_tip = u;
-    let pt = if flag & ARR_MOD_INV != 0 { inv_tip } else { normal_tip };
+    let pt = if flag & ARR_MOD_INV != 0 {
+        inv_tip
+    } else {
+        normal_tip
+    };
     let mut delta_base = PointF::ZERO;
     let mut delta_tip = PointF::ZERO;
     if u.x != 0.0 || u.y != 0.0 {
         let cos_phi = pt.x / hypot(pt.x, pt.y);
         let sin_phi = pt.y / hypot(pt.x, pt.y);
-        let phi = if pt.y > 0.0 { cos_phi.acos() } else { -cos_phi.acos() };
+        let phi = if pt.y > 0.0 {
+            cos_phi.acos()
+        } else {
+            -cos_phi.acos()
+        };
         if flag & ARR_MOD_LEFT != 0 {
             let shape = miter_shape(base_left, pt, base_right, penwidth);
             let p1 = shape[1];
@@ -136,7 +174,11 @@ fn arrow_type_normal0(p: PointF, u: PointF, penwidth: f64, flag: u32, a: &mut [P
             let dy = p1.y - pt.y;
             let h = hypot(dx, dy);
             let cos_alpha = dx / h;
-            let alpha = if dy > 0.0 { cos_alpha.acos() } else { -cos_alpha.acos() };
+            let alpha = if dy > 0.0 {
+                cos_alpha.acos()
+            } else {
+                -cos_alpha.acos()
+            };
             let gamma = alpha - phi;
             let len = h * gamma.cos();
             delta_tip = PointF::new(len * cos_phi, len * sin_phi);
@@ -147,7 +189,11 @@ fn arrow_type_normal0(p: PointF, u: PointF, penwidth: f64, flag: u32, a: &mut [P
             let dy = p2.y - pt.y;
             let h = hypot(dx, dy);
             let cos_alpha = dx / h;
-            let alpha = if dy > 0.0 { cos_alpha.acos() } else { -cos_alpha.acos() };
+            let alpha = if dy > 0.0 {
+                cos_alpha.acos()
+            } else {
+                -cos_alpha.acos()
+            };
             let gamma = alpha - phi;
             let len = h * gamma.cos();
             delta_tip = PointF::new(len * cos_phi, len * sin_phi);
@@ -181,7 +227,14 @@ fn arrow_type_normal0(p: PointF, u: PointF, penwidth: f64, flag: u32, a: &mut [P
 }
 
 /// `arrow_type_crow0` — crow/vee arrow.
-fn arrow_type_crow0(p: PointF, u: PointF, arrowsize: f64, penwidth: f64, flag: u32, a: &mut [PointF; 9]) -> PointF {
+fn arrow_type_crow0(
+    p: PointF,
+    u: PointF,
+    arrowsize: f64,
+    penwidth: f64,
+    flag: u32,
+    a: &mut [PointF; 9],
+) -> PointF {
     let mut arrowwidth = 0.45;
     if penwidth > 4.0 * arrowsize && flag & ARR_MOD_INV != 0 {
         arrowwidth *= penwidth / (4.0 * arrowsize);
@@ -197,18 +250,38 @@ fn arrow_type_crow0(p: PointF, u: PointF, arrowsize: f64, penwidth: f64, flag: u
     let origin = PointF::ZERO;
     let v_inv = scale(-1.0, v);
     let normal_left = if flag & ARR_MOD_RIGHT != 0 { origin } else { v };
-    let normal_right = if flag & ARR_MOD_LEFT != 0 { origin } else { v_inv };
-    let base_left = if flag & ARR_MOD_INV != 0 { normal_right } else { normal_left };
-    let base_right = if flag & ARR_MOD_INV != 0 { normal_left } else { normal_right };
+    let normal_right = if flag & ARR_MOD_LEFT != 0 {
+        origin
+    } else {
+        v_inv
+    };
+    let base_left = if flag & ARR_MOD_INV != 0 {
+        normal_right
+    } else {
+        normal_left
+    };
+    let base_right = if flag & ARR_MOD_INV != 0 {
+        normal_left
+    } else {
+        normal_right
+    };
     let normal_tip = u;
     let inv_tip = scale(-1.0, u);
-    let pt = if flag & ARR_MOD_INV != 0 { inv_tip } else { normal_tip };
+    let pt = if flag & ARR_MOD_INV != 0 {
+        inv_tip
+    } else {
+        normal_tip
+    };
     let mut delta_base = PointF::ZERO;
     let mut delta_tip = PointF::ZERO;
     if u.x != 0.0 || u.y != 0.0 {
         let cos_phi = pt.x / hypot(pt.x, pt.y);
         let sin_phi = pt.y / hypot(pt.x, pt.y);
-        let phi = if pt.y > 0.0 { cos_phi.acos() } else { -cos_phi.acos() };
+        let phi = if pt.y > 0.0 {
+            cos_phi.acos()
+        } else {
+            -cos_phi.acos()
+        };
         if (flag & ARR_MOD_LEFT != 0 && flag & ARR_MOD_INV != 0)
             || (flag & ARR_MOD_RIGHT != 0 && flag & ARR_MOD_INV == 0)
         {
@@ -218,7 +291,11 @@ fn arrow_type_crow0(p: PointF, u: PointF, arrowsize: f64, penwidth: f64, flag: u
             let dy = p2.y - pt.y;
             let h = hypot(dx, dy);
             let cos_alpha = dx / h;
-            let alpha = if dy > 0.0 { cos_alpha.acos() } else { -cos_alpha.acos() };
+            let alpha = if dy > 0.0 {
+                cos_alpha.acos()
+            } else {
+                -cos_alpha.acos()
+            };
             let gamma = alpha - phi;
             let len = h * gamma.cos();
             delta_tip = PointF::new(len * cos_phi, len * sin_phi);
@@ -231,7 +308,11 @@ fn arrow_type_crow0(p: PointF, u: PointF, arrowsize: f64, penwidth: f64, flag: u
             let dy = p1.y - pt.y;
             let h = hypot(dx, dy);
             let cos_alpha = dx / h;
-            let alpha = if dy > 0.0 { cos_alpha.acos() } else { -cos_alpha.acos() };
+            let alpha = if dy > 0.0 {
+                cos_alpha.acos()
+            } else {
+                -cos_alpha.acos()
+            };
             let gamma = alpha - phi;
             let len = h * gamma.cos();
             delta_tip = PointF::new(len * cos_phi, len * sin_phi);
@@ -251,7 +332,11 @@ fn arrow_type_crow0(p: PointF, u: PointF, arrowsize: f64, penwidth: f64, flag: u
             let dy = p1.y - toe_p.y;
             let h = hypot(dx, dy);
             let cos_alpha = dx / h;
-            let alpha = if dy > 0.0 { cos_alpha.acos() } else { -cos_alpha.acos() };
+            let alpha = if dy > 0.0 {
+                cos_alpha.acos()
+            } else {
+                -cos_alpha.acos()
+            };
             let gamma = alpha - phi;
             let len = -h * gamma.cos();
             delta_base = PointF::new(len * cos_phi, len * sin_phi);
@@ -318,7 +403,15 @@ fn arrow_type_tee(p: PointF, u: PointF, penwidth: f64, flag: u32, out: &mut Arro
     tee_polygon(p, m, n, q, v, flag, out)
 }
 
-fn tee_polygon(p: PointF, m: PointF, n: PointF, q: PointF, v: PointF, flag: u32, out: &mut ArrowOut) -> PointF {
+fn tee_polygon(
+    p: PointF,
+    m: PointF,
+    n: PointF,
+    q: PointF,
+    v: PointF,
+    flag: u32,
+    out: &mut ArrowOut,
+) -> PointF {
     let mut a = [add(m, v), sub(m, v), sub(n, v), add(n, v)];
     if flag & ARR_MOD_LEFT != 0 {
         a[0] = m;
@@ -355,21 +448,36 @@ fn arrow_type_box(p: PointF, u: PointF, penwidth: f64, flag: u32, out: &mut Arro
         a[1] = p;
         a[2] = m;
     }
-    out.shapes.push(ArrowShape::Polygon(a.to_vec(), flag & ARR_MOD_OPEN == 0));
+    out.shapes
+        .push(ArrowShape::Polygon(a.to_vec(), flag & ARR_MOD_OPEN == 0));
     out.shapes.push(ArrowShape::Polyline(vec![m, q]));
     q
 }
 
 /// `arrow_type_diamond0`.
-fn arrow_type_diamond0(p: PointF, u: PointF, penwidth: f64, flag: u32, a: &mut [PointF; 5]) -> PointF {
+fn arrow_type_diamond0(
+    p: PointF,
+    u: PointF,
+    penwidth: f64,
+    flag: u32,
+    a: &mut [PointF; 5],
+) -> PointF {
     let v = PointF::new(-u.y / 3.0, u.x / 3.0);
     let mut r = PointF::new(p.x + u.x / 2.0, p.y + u.y / 2.0);
     let q0 = add(p, u);
     let origin = PointF::ZERO;
     let unmod_left = sub(scale(-0.5, u), v);
     let unmod_right = add(scale(-0.5, u), v);
-    let base_left = if flag & ARR_MOD_RIGHT != 0 { origin } else { unmod_left };
-    let base_right = if flag & ARR_MOD_LEFT != 0 { origin } else { unmod_right };
+    let base_left = if flag & ARR_MOD_RIGHT != 0 {
+        origin
+    } else {
+        unmod_left
+    };
+    let base_right = if flag & ARR_MOD_LEFT != 0 {
+        origin
+    } else {
+        unmod_right
+    };
     let tip = scale(-1.0, u);
     let shape = miter_shape(base_left, tip, base_right, penwidth);
     let delta = sub(shape[0], tip);
@@ -398,7 +506,8 @@ fn arrow_type_dot(p: PointF, u: PointF, penwidth: f64, flag: u32, out: &mut Arro
     }
     let af0 = PointF::new(p.x + u.x / 2.0 - r, p.y + u.y / 2.0 - r);
     let af1 = PointF::new(p.x + u.x / 2.0 + r, p.y + u.y / 2.0 + r);
-    out.shapes.push(ArrowShape::Ellipse(af0, af1, flag & ARR_MOD_OPEN == 0));
+    out.shapes
+        .push(ArrowShape::Ellipse(af0, af1, flag & ARR_MOD_OPEN == 0));
     let mut q = add(p, u);
     q = sub(q, delta);
     q
@@ -406,7 +515,12 @@ fn arrow_type_dot(p: PointF, u: PointF, penwidth: f64, flag: u32, out: &mut Arro
 
 /// utils.c `Bezier` — de Casteljau evaluation at t, optionally emitting the
 /// subdivided left/right control polygons.
-pub fn bezier_eval(v: &[PointF; 4], t: f64, left: Option<&mut [PointF; 4]>, right: Option<&mut [PointF; 4]>) -> PointF {
+pub fn bezier_eval(
+    v: &[PointF; 4],
+    t: f64,
+    left: Option<&mut [PointF; 4]>,
+    right: Option<&mut [PointF; 4]>,
+) -> PointF {
     // C's Bezier() builds the full de Casteljau triangle Vtemp[i][j], then
     // returns Left[j] = Vtemp[j][0] and Right[j] = Vtemp[degree-j][j].
     let mut vt = [[PointF::ZERO; 4]; 4];
@@ -483,7 +597,14 @@ fn dist(a: PointF, b: PointF) -> f64 {
 }
 
 /// `arrowEndClip` — pull the spline's head end back by the arrow length.
-pub fn arrow_end_clip(spl_ep: &mut PointF, ps: &mut [PointF], startp: usize, mut endp: usize, _eflag: u32, elen: f64) -> usize {
+pub fn arrow_end_clip(
+    spl_ep: &mut PointF,
+    ps: &mut [PointF],
+    startp: usize,
+    mut endp: usize,
+    _eflag: u32,
+    elen: f64,
+) -> usize {
     *spl_ep = ps[endp + 3];
     if endp > startp && dist(ps[endp], ps[endp + 3]) < elen {
         endp -= 3;
@@ -505,7 +626,14 @@ pub fn arrow_end_clip(spl_ep: &mut PointF, ps: &mut [PointF], startp: usize, mut
 }
 
 /// `arrowStartClip`.
-pub fn arrow_start_clip(spl_sp: &mut PointF, ps: &mut [PointF], mut startp: usize, endp: usize, _sflag: u32, slen: f64) -> usize {
+pub fn arrow_start_clip(
+    spl_sp: &mut PointF,
+    ps: &mut [PointF],
+    mut startp: usize,
+    endp: usize,
+    _sflag: u32,
+    slen: f64,
+) -> usize {
     *spl_sp = ps[startp];
     if endp > startp && dist(ps[startp], ps[startp + 3]) < slen {
         startp += 3;
@@ -658,7 +786,9 @@ pub fn arrow_pull_len(flag: u32, arrowsize: f64, penwidth: f64) -> f64 {
             ARR_TYPE_CROW => length += arrow_length_crow(1.0, arrowsize, penwidth, arrow_flag),
             ARR_TYPE_TEE => length += arrow_length_tee(0.5, arrowsize, penwidth, arrow_flag),
             ARR_TYPE_BOX => length += arrow_length_box(1.0, arrowsize, penwidth, arrow_flag),
-            ARR_TYPE_DIAMOND => length += arrow_length_diamond(1.2, arrowsize, penwidth, arrow_flag),
+            ARR_TYPE_DIAMOND => {
+                length += arrow_length_diamond(1.2, arrowsize, penwidth, arrow_flag)
+            }
             ARR_TYPE_DOT => length += arrow_length_dot(0.8, arrowsize, penwidth, arrow_flag),
             ARR_TYPE_CURVE => length += arrow_length_curve(1.0, arrowsize, penwidth, arrow_flag),
             ARR_TYPE_GAP => length += arrow_length_generic(0.5, arrowsize, penwidth, arrow_flag),
@@ -858,7 +988,14 @@ pub fn arrow_gen(p: PointF, tip: PointF, arrowsize: f64, penwidth: f64, flag: u3
     out
 }
 
-fn arrow_gen_type(p: PointF, mut u: PointF, arrowsize: f64, penwidth: f64, flag: u32, out: &mut ArrowOut) -> PointF {
+fn arrow_gen_type(
+    p: PointF,
+    mut u: PointF,
+    arrowsize: f64,
+    penwidth: f64,
+    flag: u32,
+    out: &mut ArrowOut,
+) -> PointF {
     let f = flag & TYPE_MASK;
     let (lenfact, genfn): (f64, fn(PointF, PointF, ArrowGenArgs) -> PointF) = match f {
         ARR_TYPE_NORM => (1.0, |p, u, args| {
@@ -871,7 +1008,9 @@ fn arrow_gen_type(p: PointF, mut u: PointF, arrowsize: f64, penwidth: f64, flag:
             } else {
                 a[1..4].to_vec()
             };
-            args.out.shapes.push(ArrowShape::Polygon(poly, args.flag & ARR_MOD_OPEN == 0));
+            args.out
+                .shapes
+                .push(ArrowShape::Polygon(poly, args.flag & ARR_MOD_OPEN == 0));
             q
         }),
         ARR_TYPE_CROW => (1.0, |p, u, args| {
@@ -887,8 +1026,12 @@ fn arrow_gen_type(p: PointF, mut u: PointF, arrowsize: f64, penwidth: f64, flag:
             args.out.shapes.push(ArrowShape::Polygon(poly, true));
             q
         }),
-        ARR_TYPE_TEE => (0.5, |p, u, args| arrow_type_tee(p, u, args.penwidth, args.flag, args.out)),
-        ARR_TYPE_BOX => (1.0, |p, u, args| arrow_type_box(p, u, args.penwidth, args.flag, args.out)),
+        ARR_TYPE_TEE => (0.5, |p, u, args| {
+            arrow_type_tee(p, u, args.penwidth, args.flag, args.out)
+        }),
+        ARR_TYPE_BOX => (1.0, |p, u, args| {
+            arrow_type_box(p, u, args.penwidth, args.flag, args.out)
+        }),
         ARR_TYPE_DIAMOND => (1.2, |p, u, args| {
             let mut a = [PointF::ZERO; 5];
             let q = arrow_type_diamond0(p, u, args.penwidth, args.flag, &mut a);
@@ -899,16 +1042,31 @@ fn arrow_gen_type(p: PointF, mut u: PointF, arrowsize: f64, penwidth: f64, flag:
             } else {
                 a[..4].to_vec()
             };
-            args.out.shapes.push(ArrowShape::Polygon(poly, args.flag & ARR_MOD_OPEN == 0));
+            args.out
+                .shapes
+                .push(ArrowShape::Polygon(poly, args.flag & ARR_MOD_OPEN == 0));
             q
         }),
-        ARR_TYPE_DOT => (0.8, |p, u, args| arrow_type_dot(p, u, args.penwidth, args.flag, args.out)),
-        ARR_TYPE_CURVE => (1.0, |p, u, args| arrow_type_curve(p, u, args.penwidth, args.flag, args.out)),
+        ARR_TYPE_DOT => (0.8, |p, u, args| {
+            arrow_type_dot(p, u, args.penwidth, args.flag, args.out)
+        }),
+        ARR_TYPE_CURVE => (1.0, |p, u, args| {
+            arrow_type_curve(p, u, args.penwidth, args.flag, args.out)
+        }),
         ARR_TYPE_GAP => (0.5, |p, u, args| arrow_type_gap(p, u, args.out)),
         _ => return p,
     };
     u = scale(lenfact * arrowsize, u);
-    genfn(p, u, ArrowGenArgs { arrowsize, penwidth, flag, out })
+    genfn(
+        p,
+        u,
+        ArrowGenArgs {
+            arrowsize,
+            penwidth,
+            flag,
+            out,
+        },
+    )
 }
 
 struct ArrowGenArgs<'o> {
@@ -920,7 +1078,11 @@ struct ArrowGenArgs<'o> {
 
 /// `arrow_type_curve` — the curved (parenthesis) arrow.
 fn arrow_type_curve(p: PointF, u: PointF, penwidth: f64, flag: u32, out: &mut ArrowOut) -> PointF {
-    let arrowwidth = if penwidth > 4.0 { 0.5 * penwidth / 4.0 } else { 0.5 };
+    let arrowwidth = if penwidth > 4.0 {
+        0.5 * penwidth / 4.0
+    } else {
+        0.5
+    };
     let mut p = p;
     if flag & ARR_MOD_INV == 0 && (u.x != 0.0 || u.y != 0.0) {
         let pt = scale(-1.0, u);
@@ -936,11 +1098,23 @@ fn arrow_type_curve(p: PointF, u: PointF, penwidth: f64, flag: u32, out: &mut Ar
     af[0] = add(add(p, v), w);
     af[3] = add(sub(p, v), w);
     if flag & ARR_MOD_INV != 0 {
-        af[1] = PointF::new(p.x + 0.95 * v.x + w.x + w.x * 4.0 / 3.0, af[0].y + w.y * 4.0 / 3.0);
-        af[2] = PointF::new(p.x - 0.95 * v.x + w.x + w.x * 4.0 / 3.0, af[3].y + w.y * 4.0 / 3.0);
+        af[1] = PointF::new(
+            p.x + 0.95 * v.x + w.x + w.x * 4.0 / 3.0,
+            af[0].y + w.y * 4.0 / 3.0,
+        );
+        af[2] = PointF::new(
+            p.x - 0.95 * v.x + w.x + w.x * 4.0 / 3.0,
+            af[3].y + w.y * 4.0 / 3.0,
+        );
     } else {
-        af[1] = PointF::new(p.x + 0.95 * v.x + w.x - w.x * 4.0 / 3.0, af[0].y - w.y * 4.0 / 3.0);
-        af[2] = PointF::new(p.x - 0.95 * v.x + w.x - w.x * 4.0 / 3.0, af[3].y - w.y * 4.0 / 3.0);
+        af[1] = PointF::new(
+            p.x + 0.95 * v.x + w.x - w.x * 4.0 / 3.0,
+            af[0].y - w.y * 4.0 / 3.0,
+        );
+        af[2] = PointF::new(
+            p.x - 0.95 * v.x + w.x - w.x * 4.0 / 3.0,
+            af[3].y - w.y * 4.0 / 3.0,
+        );
     }
     out.shapes.push(ArrowShape::Polyline(vec![p, q]));
     let mut curve = af;

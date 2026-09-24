@@ -31,14 +31,6 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn file_name(&self) -> String {
-        self.path
-            .as_deref()
-            .and_then(|p| p.file_name())
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled graph".into())
-    }
-
     /// The layer direction the layout was computed with.
     pub fn rank_dir(&self) -> RankDir {
         self.view.rank_dir
@@ -101,10 +93,7 @@ impl Document {
     /// corner currently sits at. Painting uses this so the dragged node, its
     /// label and every edge touching it follow the cursor; the committed
     /// offsets only change on release.
-    pub fn offsets_with_live_drag(
-        &self,
-        drag: Option<(usize, (f32, f32))>,
-    ) -> Vec<(f32, f32)> {
+    pub fn offsets_with_live_drag(&self, drag: Option<(usize, (f32, f32))>) -> Vec<(f32, f32)> {
         let Some((node, pos)) = drag else {
             return (*self.offsets).clone();
         };
@@ -147,51 +136,76 @@ impl Document {
         })
     }
 
-    /// Returns the document re-measured with the labels at `label_scale`×
-    /// their size and re-laid-out in the forced `rank_dir`. The graph and the
-    /// path are shared; only the view changes, and drag offsets reset — the
-    /// fresh layout positions every node from scratch.
-    pub fn relayout(
-        &self,
-        rank_dir: RankDir,
-        label_scale: f32,
-        text_system: &WindowTextSystem,
-    ) -> Document {
-        let graph = self.graph.clone();
-        let measured = layout::measure::measure_scaled(&graph, text_system, FONT_FAMILY, label_scale);
-        let view = Rc::new(build_view(&graph, &measured, rank_dir));
-        let offsets = Rc::new(vec![(0.0, 0.0); graph.nodes.len()]);
+    /// Returns the document with `view` as its computed layout — the
+    /// assembly side of an off-thread re-layout (see
+    /// [`relayout_graph`]). Drag offsets reset: the fresh layout positions
+    /// every node from scratch.
+    pub fn with_view(&self, view: DotView) -> Document {
         Document {
             path: self.path.clone(),
-            graph,
-            view,
-            offsets,
+            graph: self.graph.clone(),
+            view: Rc::new(view),
+            offsets: Rc::new(vec![(0.0, 0.0); self.graph.nodes.len()]),
         }
     }
 }
 
-/// Runs the dot engine and builds the render view, honoring a forced
-/// direction (the settings "Direction" choice) over the graph's own
-/// `rankdir` attribute.
-fn build_view(
+/// The owned, `Send` output of an off-thread load: the parsed graph and its
+/// computed layout. [`Document`] shares its parts through `Rc`, which cannot
+/// cross a thread boundary, so the pipeline hands this struct back instead
+/// and the main thread assembles it with [`Document::from_parts`].
+pub struct LoadOutput {
+    /// The file the graph was read from, when it came from disk.
+    pub path: Option<PathBuf>,
+    pub graph: Graph,
+    /// The dot layout in render form (world coordinates, y down).
+    pub view: DotView,
+}
+
+impl Document {
+    /// Assembles a document from an off-thread load ([`load_parts`]).
+    pub fn from_parts(parts: LoadOutput) -> Document {
+        let offsets = vec![(0.0, 0.0); parts.graph.nodes.len()];
+        Document {
+            path: parts.path,
+            graph: Rc::new(parts.graph),
+            view: Rc::new(parts.view),
+            offsets: Rc::new(offsets),
+        }
+    }
+}
+
+/// Computes a fresh layout for a copy of `graph` with the labels at
+/// `label_scale`× their size, laid out in the forced `rank_dir` (the
+/// settings "Direction" choice). Runs on whatever thread calls it — every
+/// argument and the result are `Send`, so the caller runs it on the
+/// background executor while the main thread keeps painting. Fails with a
+/// layout error when the engine produces an unusable drawing; the caller
+/// keeps the previous document then.
+pub fn relayout_graph(
     graph: &Graph,
-    measured: &dotgen::Measured,
     rank_dir: RankDir,
-) -> DotView {
-    let mut graph_for_layout: Graph = graph.clone();
-    graph_for_layout.set_graph_attr("rankdir", rank_dir.as_dot());
-    let layout = dotgen::layout(&graph_for_layout, measured);
-    layout::view(&layout, graph, rank_dir)
+    label_scale: f32,
+    text_system: &WindowTextSystem,
+) -> Result<DotView, graph::LoadError> {
+    let measured = layout::measure::measure_scaled(graph, text_system, FONT_FAMILY, label_scale);
+    let (graph, view) = layout_view(graph.clone(), &measured, rank_dir);
+    validate_layout(&graph, &view)?;
+    Ok(view)
 }
 
 /// Reads a DOT file from disk, parses it, measures its labels with the given
-/// text system and computes its layout with the dot engine.
-pub fn load_document(
+/// text system and computes its layout with the dot engine. Runs on whatever
+/// thread calls it — every argument and the result are `Send`, so the caller
+/// runs it on the background executor while the main thread keeps painting.
+/// Assemble the result on the main thread with [`Document::from_parts`].
+pub fn load_parts(
     path: impl Into<PathBuf>,
     text_system: &WindowTextSystem,
-) -> Result<Document, graph::LoadError> {
+) -> Result<LoadOutput, graph::LoadError> {
     let (path, graph) = graph::load(path)?;
-    let graph = Rc::new(graph);
+    // Honor a forced direction (the settings "Direction" choice) over the
+    // graph's own `rankdir` attribute.
     let rank_dir = RankDir::parse(
         graph
             .graph_attrs()
@@ -200,19 +214,156 @@ pub fn load_document(
             .unwrap_or("TB"),
     );
     let measured = layout::measure::measure(&graph, text_system, FONT_FAMILY);
-    let view = Rc::new(build_view(&graph, &measured, rank_dir));
-    let offsets = Rc::new(vec![(0.0, 0.0); graph.nodes.len()]);
-    Ok(Document {
+    let (graph, view) = layout_view(graph, &measured, rank_dir);
+    validate_layout(&graph, &view)?;
+    Ok(LoadOutput {
         path: Some(path),
         graph,
         view,
-        offsets,
     })
+}
+
+/// Computes the dot layout for an owned `graph`, forcing `rank_dir` as a
+/// graph attribute, and builds the render view. Consumes the graph, so an
+/// owned load lays out without an extra clone; the graph comes back for
+/// validation and assembly.
+fn layout_view(
+    mut graph: Graph,
+    measured: &dotgen::Measured,
+    rank_dir: RankDir,
+) -> (Graph, DotView) {
+    graph.set_graph_attr("rankdir", rank_dir.as_dot());
+    let layout = dotgen::layout(&graph, measured);
+    let view = layout::view(&layout, &graph, rank_dir);
+    (graph, view)
+}
+
+/// Runs the dot engine and builds the render view from a shared graph,
+/// honoring a forced direction (the settings "Direction" choice) over the
+/// graph's own `rankdir` attribute.
+#[cfg(test)]
+fn build_view(graph: &Graph, measured: &dotgen::Measured, rank_dir: RankDir) -> DotView {
+    layout_view(graph.clone(), measured, rank_dir).1
+}
+
+/// Guards the load pipeline against an unusable drawing: the engine must
+/// account for every node and produce finite geometry. A violation becomes
+/// a [`graph::LoadError::Layout`] — reported to the user — instead of a
+/// broken canvas.
+fn validate_layout(graph: &Graph, view: &DotView) -> Result<(), graph::LoadError> {
+    if view.nodes.len() != graph.nodes.len() {
+        return Err(graph::LoadError::Layout(format!(
+            "{} of {} nodes were laid out",
+            view.nodes.len(),
+            graph.nodes.len()
+        )));
+    }
+    for (index, node) in view.nodes.iter().enumerate() {
+        if !node.x.is_finite() || !node.y.is_finite() || !node.w.is_finite() || !node.h.is_finite()
+        {
+            return Err(graph::LoadError::Layout(format!(
+                "node {} ({}) has non-finite geometry",
+                index, graph.nodes[index].name
+            )));
+        }
+    }
+    for (index, edge) in view.edges.iter().enumerate() {
+        if edge
+            .segments
+            .iter()
+            .flatten()
+            .any(|point| !point.0.is_finite() || !point.1.is_finite())
+        {
+            return Err(graph::LoadError::Layout(format!(
+                "edge {index} is routed through a non-finite point"
+            )));
+        }
+        if let Some(label) = &edge.label
+            && (!label.center.0.is_finite() || !label.center.1.is_finite())
+        {
+            return Err(graph::LoadError::Layout(format!(
+                "edge {index} has a non-finite label position"
+            )));
+        }
+    }
+    for (index, cluster) in view.clusters.iter().enumerate() {
+        let (x, y, w, h) = cluster.rect;
+        if !x.is_finite() || !y.is_finite() || !w.is_finite() || !h.is_finite() {
+            return Err(graph::LoadError::Layout(format!(
+                "cluster {index} has a non-finite box"
+            )));
+        }
+    }
+    let (min_x, min_y, max_x, max_y) = view.bounds;
+    if !min_x.is_finite() || !min_y.is_finite() || !max_x.is_finite() || !max_y.is_finite() {
+        return Err(graph::LoadError::Layout(
+            "the drawing bounds are not finite".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The off-thread handoff types stay `Send`: the load and re-layout
+    /// pipelines run on the background executor and hand their output back
+    /// to the main thread. A non-`Send` field added to any of these breaks
+    /// `load_into_tab`/`relayout_for_settings` at compile time.
+    #[test]
+    fn load_pipeline_types_are_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<LoadOutput>();
+        assert_send::<DotView>();
+        assert_send::<graph::LoadError>();
+    }
+
+    /// A computed layout passes its own guard: every node accounted for and
+    /// finite geometry throughout.
+    #[test]
+    fn validate_layout_accepts_a_well_routed_drawing() {
+        let source = "digraph { a -> b; b -> c; c -> a; }";
+        let document = document(source);
+        validate_layout(&document.graph, &document.view)
+            .expect("the engine's own layout validates");
+    }
+
+    /// A layout that lost nodes or went non-finite is a layout error: the
+    /// load reports it to the user instead of painting garbage.
+    #[test]
+    fn validate_layout_rejects_missing_nodes_and_non_finite_geometry() {
+        let source = "digraph { a -> b; b -> c; }";
+        let document = document(source);
+        let graph = document.graph.clone();
+        let base = (*document.view).clone();
+        assert_eq!(base.nodes.len(), 3);
+
+        // An auxiliary-node leak: fewer nodes laid out than the graph holds.
+        let mut truncated = base.clone();
+        truncated.nodes.truncate(2);
+        let err = validate_layout(&graph, &truncated).unwrap_err();
+        assert!(matches!(err, graph::LoadError::Layout(_)), "{err}");
+        assert!(err.to_string().contains("2 of 3 nodes"), "{err}");
+
+        // A non-finite node box.
+        let mut drifted = base.clone();
+        drifted.nodes[0].x = f32::NAN;
+        let err = validate_layout(&graph, &drifted).unwrap_err();
+        assert!(err.to_string().contains("non-finite"), "{err}");
+
+        // A non-finite edge control point.
+        let mut unrouted = base.clone();
+        unrouted.edges[0].segments[0][0].0 = f32::INFINITY;
+        let err = validate_layout(&graph, &unrouted).unwrap_err();
+        assert!(err.to_string().contains("non-finite"), "{err}");
+
+        // A non-finite drawing bounds.
+        let mut unbounded = base;
+        unbounded.bounds = (0.0, 0.0, f32::NAN, 0.0);
+        let err = validate_layout(&graph, &unbounded).unwrap_err();
+        assert!(err.to_string().contains("bounds"), "{err}");
+    }
 
     /// Every routed edge must be paintable: finite control points, segments
     /// that share their endpoints (no gaps), and a label that sits on its own
@@ -248,7 +399,7 @@ mod tests {
                 .iter()
                 .map(|e| e.label().map(|l| (l.chars().count() as f64 * 5.0, 11.0)))
                 .collect(),
-                    measure: None,
+            measure: None,
         };
         let view = build_view(&graph, &measured, RankDir::TB);
         assert!(view.edges.len() > 30);
@@ -266,8 +417,7 @@ mod tests {
                 assert!(gap < 0.01, "edge {i} has a {gap:.3}pt gap between segments");
             }
             if let Some(label) = &edge.label {
-                let (mut x0, mut x1, mut y0, mut y1) =
-                    (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+                let (mut x0, mut x1, mut y0, mut y1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
                 for s in &edge.segments {
                     for p in s {
                         x0 = x0.min(p.0);
@@ -323,7 +473,7 @@ mod tests {
                 .iter()
                 .map(|e| e.label().map(|l| (l.chars().count() as f64 * 5.0, 11.0)))
                 .collect(),
-                    measure: None,
+            measure: None,
         };
         let view = build_view(&graph, &measured, RankDir::LR);
 
@@ -351,7 +501,7 @@ mod tests {
             node: vec![(54.0, 36.0); graph.nodes.len()],
             label: Vec::new(),
             edge_label: vec![None; graph.edges.len()],
-                    measure: None,
+            measure: None,
         };
         let view = Rc::new(build_view(&graph, &measured, RankDir::TB));
         let n = graph.nodes.len();
@@ -466,7 +616,11 @@ mod tests {
         };
         let view = build_view(&graph, &measured, RankDir::TB);
         let node_box = |name: &str| {
-            let index = graph.nodes.iter().position(|n| n.name == name).expect("node");
+            let index = graph
+                .nodes
+                .iter()
+                .position(|n| n.name == name)
+                .expect("node");
             view.nodes[index].clone()
         };
         // headport=s: the routed head end sits below b's centre.
@@ -512,7 +666,11 @@ mod tests {
         };
         let rank_of = |ranks: &[i32], name: &str| {
             let graph = graph::parser::parse(source).expect("parse");
-            let i = graph.nodes.iter().position(|n| n.name == name).expect("node");
+            let i = graph
+                .nodes
+                .iter()
+                .position(|n| n.name == name)
+                .expect("node");
             ranks[i]
         };
         let on = ranks(source);
@@ -547,11 +705,20 @@ mod tests {
             measure: None,
         };
         let view = build_view(&graph, &measured, RankDir::TB);
-        assert_eq!(view.nodes.len(), graph.nodes.len(), "no auxiliary nodes survive ranking");
+        assert_eq!(
+            view.nodes.len(),
+            graph.nodes.len(),
+            "no auxiliary nodes survive ranking"
+        );
         assert_eq!(view.edges.len(), n_edges, "no auxiliary edges survive");
         let layout = dotgen::layout(&graph, &measured);
         assert!(layout.ranks.iter().all(|r| *r >= 0));
-        assert!(layout.coords.iter().all(|c| c.x.is_finite() && c.y.is_finite()));
+        assert!(
+            layout
+                .coords
+                .iter()
+                .all(|c| c.x.is_finite() && c.y.is_finite())
+        );
     }
 
     /// `concentrate=true`: parallel edges between the same endpoints are
@@ -571,11 +738,7 @@ mod tests {
         };
         let view = build_view(&graph, &measured, RankDir::TB);
         assert_eq!(view.edges.len(), 3, "every input edge keeps its record");
-        let routed = view
-            .edges
-            .iter()
-            .filter(|e| !e.segments.is_empty())
-            .count();
+        let routed = view.edges.iter().filter(|e| !e.segments.is_empty()).count();
         assert_eq!(routed, 1, "only the concentrator is routed");
     }
 
@@ -703,7 +866,7 @@ mod tests {
             node: vec![(54.0, 36.0); graph.nodes.len()],
             label: Vec::new(),
             edge_label: vec![None; graph.edges.len()],
-                    measure: None,
+            measure: None,
         };
         let view = build_view(&graph, &measured, RankDir::LR);
         assert_eq!(view.clusters.len(), 2);
@@ -714,8 +877,15 @@ mod tests {
         cols.dedup_by(|a, b| (*a - *b).abs() < 0.5);
         assert_eq!(cols.len(), 4, "expected four rank columns, got {cols:?}");
         for (name, expected) in [("p", 0usize), ("q", 1), ("r", 2), ("s", 3)] {
-            let index = graph.nodes.iter().position(|n| n.name == name).expect("node");
-            assert!((view.nodes[index].x - cols[expected]).abs() < 0.5, "{name} in the wrong column");
+            let index = graph
+                .nodes
+                .iter()
+                .position(|n| n.name == name)
+                .expect("node");
+            assert!(
+                (view.nodes[index].x - cols[expected]).abs() < 0.5,
+                "{name} in the wrong column"
+            );
         }
         for edge in view.edges.iter() {
             assert!(!edge.segments.is_empty(), "edge not routed");
@@ -738,7 +908,7 @@ mod tests {
             node: vec![(54.0, 36.0); graph.nodes.len()],
             label: Vec::new(),
             edge_label: vec![None; graph.edges.len()],
-                    measure: None,
+            measure: None,
         };
         let view = build_view(&graph, &measured, RankDir::TB);
         assert_eq!(view.clusters.len(), 2, "one box per cluster subgraph");

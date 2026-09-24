@@ -47,10 +47,10 @@
 
 use std::cmp::Ordering;
 
-use super::geom::{round, BoxF, PointF};
-use super::model::{self, EdgeType, EId, Fg, GId, NId, NodeType, Port, SplineType};
+use super::geom::{BoxF, PointF, round};
+use super::model::{self, EId, EdgeType, Fg, GId, NId, NodeType, Port, SplineType};
 use super::pathplan::{make_polyline, proutespline, pshortestpath};
-use super::splines::{clip_and_install, routesplines_, Path};
+use super::splines::{Path, clip_and_install, routesplines_};
 
 // ---------------------------------------------------------------------------
 // constants (dotsplines.c:36-46, common/const.h:111-123, 150-155)
@@ -191,14 +191,20 @@ fn swap_ends_p(fg: &Fg, e: EId) -> bool {
     while let Some(o) = fg.edges[e].to_orig {
         e = o;
     }
-    let (tr, hr) = (fg.nodes[fg.edges[e].tail].rank, fg.nodes[fg.edges[e].head].rank);
+    let (tr, hr) = (
+        fg.nodes[fg.edges[e].tail].rank,
+        fg.nodes[fg.edges[e].head].rank,
+    );
     if hr > tr {
         return false;
     }
     if hr < tr {
         return true;
     }
-    let (to, ho) = (fg.nodes[fg.edges[e].tail].order, fg.nodes[fg.edges[e].head].order);
+    let (to, ho) = (
+        fg.nodes[fg.edges[e].tail].order,
+        fg.nodes[fg.edges[e].head].order,
+    );
     ho < to
 }
 
@@ -457,7 +463,11 @@ fn place_vnlabel(fg: &mut Fg, g: GId, n: NId) {
         None => return,
     };
     let dimen = fg.labels[li].dimen;
-    let width = if fg.graphs[g].rankdir.flip() { dimen.y } else { dimen.x };
+    let width = if fg.graphs[g].rankdir.flip() {
+        dimen.y
+    } else {
+        dimen.x
+    };
     // the vnode's center is the LEFT edge of the text (position widened it
     // leftwards), hence +width/2
     let pos = PointF::new(fg.nodes[n].coord.x + width / 2.0, fg.nodes[n].coord.y);
@@ -554,7 +564,13 @@ fn set_orig_port_clip(fg: &mut Fg, e: EId, n: NId, tail_side: bool) {
 /// `resolvePort` for edge `e`'s port at node `n`, using the node's shape and
 /// the other endpoint's position (`GD_tail_port`/`GD_head_port` are assigned
 /// in `beginpath`/`endpath`).
-fn resolve_port_of(fg: &mut Fg, e: EId, n: NId, other: NId, tail_side: bool) -> Option<model::Port> {
+fn resolve_port_of(
+    fg: &mut Fg,
+    e: EId,
+    n: NId,
+    other: NId,
+    tail_side: bool,
+) -> Option<model::Port> {
     let old = if tail_side {
         fg.edges[e].tail_port
     } else {
@@ -586,7 +602,15 @@ fn resolve_port_of(fg: &mut Fg, e: EId, n: NId, other: NId, tail_side: bool) -> 
 /// splines.c:376 `beginpath` — set up boxes near the tail node. Sets
 /// `P.start.p/theta`, clears `P.boxes` (`P->nbox = 0`) and fills
 /// `endp->boxes`.
-fn beginpath(fg: &mut Fg, g: GId, path: &mut Path, e: EId, et: i32, endp: &mut PathEnd, merge: bool) {
+fn beginpath(
+    fg: &mut Fg,
+    g: GId,
+    path: &mut Path,
+    e: EId,
+    et: i32,
+    endp: &mut PathEnd,
+    merge: bool,
+) {
     // splines.c:382-383 — a `_` port picks its side now that the other
     // endpoint's position is known.
     if fg.edges[e].tail_port.dyna {
@@ -1184,8 +1208,10 @@ fn dot_splines_(fg: &mut Fg, g: GId, normalize: bool) -> Result<(), i32> {
             } else if r == minrank {
                 fg.nodes[n].coord.y - rank_v0_y(fg, g, r + 1).unwrap_or(fg.nodes[n].coord.y)
             } else {
-                let upy = rank_v0_y(fg, g, r - 1).unwrap_or(fg.nodes[n].coord.y) - fg.nodes[n].coord.y;
-                let dwny = fg.nodes[n].coord.y - rank_v0_y(fg, g, r + 1).unwrap_or(fg.nodes[n].coord.y);
+                let upy =
+                    rank_v0_y(fg, g, r - 1).unwrap_or(fg.nodes[n].coord.y) - fg.nodes[n].coord.y;
+                let dwny =
+                    fg.nodes[n].coord.y - rank_v0_y(fg, g, r + 1).unwrap_or(fg.nodes[n].coord.y);
                 upy.min(dwny)
             };
             make_self_edge(fg, g, &group, sp.multisep, sizey / 2.0);
@@ -1237,14 +1263,22 @@ fn dot_splines_(fg: &mut Fg, g: GId, normalize: bool) -> Result<(), i32> {
 // ---------------------------------------------------------------------------
 
 /// dotsplines.c:1707 `make_regular_edge` — the box-channel router.
-fn make_regular_edge(fg: &mut Fg, g: GId, sp: &mut SplineInfo, path: &mut Path, edges: &[EId], et: SplineType) {
+fn make_regular_edge(
+    fg: &mut Fg,
+    g: GId,
+    sp: &mut SplineInfo,
+    path: &mut Path,
+    edges: &[EId],
+    et: SplineType,
+) {
     let mut pointfs: Vec<PointF> = Vec::new();
     let e_raw = edges[0];
     let has_labels = fg.graphs[0].has_labels & 1 != 0;
     let is_spline = et == SplineType::Spline;
 
     // ---- step 1: the cross-rank "hack" edge (:1723-1760)
-    let rank_span = (fg.nodes[fg.edges[e_raw].tail].rank - fg.nodes[fg.edges[e_raw].head].rank).abs();
+    let rank_span =
+        (fg.nodes[fg.edges[e_raw].tail].rank - fg.nodes[fg.edges[e_raw].head].rank).abs();
     let (mut e, fe, fwd_b, hackflag);
     if rank_span > 1 {
         let bw = fg.edges[e_raw].tree_index & BWDEDGE != 0;
@@ -1351,9 +1385,21 @@ fn make_regular_edge(fg: &mut Fg, g: GId, sp: &mut SplineInfo, path: &mut Path, 
             hend = PathEnd::default();
             let out0 = fg.nodes[hn].out[0];
             hend.nb = maximal_bbox(fg, g, sp, hn, Some(e), Some(out0));
-            endpath(fg, g, path, e, REGULAREDGE, &mut hend, spline_merge(fg, fg.edges[e].head));
+            endpath(
+                fg,
+                g,
+                path,
+                e,
+                REGULAREDGE,
+                &mut hend,
+                spline_merge(fg, fg.edges[e].head),
+            );
             let (_, ht2h) = rank_pair(fg, g, fg.nodes[hn].rank);
-            let hb = makeregularend(*hend.boxes.last().unwrap(), TOP, fg.nodes[hn].coord.y + ht2h);
+            let hb = makeregularend(
+                *hend.boxes.last().unwrap(),
+                TOP,
+                fg.nodes[hn].coord.y + ht2h,
+            );
             if box_nonempty(hb) {
                 hend.boxes.push(hb);
             }
@@ -1386,7 +1432,11 @@ fn make_regular_edge(fg: &mut Fg, g: GId, sp: &mut SplineInfo, path: &mut Path, 
             tend.nb = maximal_bbox(fg, g, sp, tn, Some(fg.nodes[tn].in_[0]), Some(e));
             beginpath(fg, g, path, e, REGULAREDGE, &mut tend, spline_merge(fg, tn));
             let (ht1t, _) = rank_pair(fg, g, fg.nodes[tn].rank);
-            let tb = makeregularend(*tend.boxes.last().unwrap(), BOTTOM, fg.nodes[tn].coord.y - ht1t);
+            let tb = makeregularend(
+                *tend.boxes.last().unwrap(),
+                BOTTOM,
+                fg.nodes[tn].coord.y - ht1t,
+            );
             if box_nonempty(tb) {
                 tend.boxes.push(tb);
             }
@@ -1443,7 +1493,14 @@ fn make_regular_edge(fg: &mut Fg, g: GId, sp: &mut SplineInfo, path: &mut Path, 
 /// dotsplines.c:1892-1914 — duplicate the routed points once per group
 /// member, stepping interior control points one `Multisep` to the right per
 /// edge (endpoints are NOT shifted).
-fn fan_out(fg: &mut Fg, sp: &SplineInfo, fe: EId, hn: NId, pointfs: &mut Vec<PointF>, edges: &[EId]) {
+fn fan_out(
+    fg: &mut Fg,
+    sp: &SplineInfo,
+    fe: EId,
+    hn: NId,
+    pointfs: &mut Vec<PointF>,
+    edges: &[EId],
+) {
     let cnt = edges.len();
     if cnt == 1 {
         let sw = swap_ends_p(fg, fe);
@@ -1591,7 +1648,10 @@ fn rank_box(fg: &Fg, g: GId, sp: &mut SplineInfo, r: i32) -> BoxF {
     if b.ll.x == b.ur.x {
         let rank = &fg.graphs[g].rank[ri];
         let left0 = rank.v.first().copied();
-        let left1 = fg.graphs[g].rank.get(ri + 1).and_then(|rk| rk.v.first().copied());
+        let left1 = fg.graphs[g]
+            .rank
+            .get(ri + 1)
+            .and_then(|rk| rk.v.first().copied());
         b.ll.x = sp.left_bound;
         b.ur.x = sp.right_bound;
         b.ll.y = match left1 {
@@ -1860,7 +1920,14 @@ fn cl_bound(fg: &Fg, g: GId, n: NId, adj: NId) -> Option<GId> {
 /// `vn` that the path may occupy on vn's rank. Virtual neighbors "give" only
 /// `Splinesep = nodesep/4`; real nodes `nodesep/2`; clusters truncate via
 /// their bbox ± Splinesep.
-fn maximal_bbox(fg: &Fg, g: GId, sp: &SplineInfo, vn: NId, ie: Option<EId>, oe: Option<EId>) -> BoxF {
+fn maximal_bbox(
+    fg: &Fg,
+    g: GId,
+    sp: &SplineInfo,
+    vn: NId,
+    ie: Option<EId>,
+    oe: Option<EId>,
+) -> BoxF {
     let coord = fg.nodes[vn].coord;
     let nodesep2 = fg.graphs[g].nodesep as f64 / 2.0;
 
@@ -2140,7 +2207,11 @@ fn make_flat_edge(
     let r = fg.nodes[tn].rank;
     let vspace: f64 = if r > 0 {
         // label vnodes occupy the rank above flat edges
-        let prevr = if fg.graphs[0].has_labels & 1 != 0 { r - 2 } else { r - 1 };
+        let prevr = if fg.graphs[0].has_labels & 1 != 0 {
+            r - 2
+        } else {
+            r - 1
+        };
         let py = rank_v0_y(fg, g, prevr).unwrap_or(0.0);
         let (pht1, _) = rank_pair(fg, g, prevr);
         let (_, ht2) = rank_pair(fg, g, r);
@@ -2219,7 +2290,10 @@ fn make_flat_adj_edges(
     let hn = fg.edges[e].head;
     // C warns and bails for record shapes (dotsplines.c:1144-1152); records
     // are not modeled.
-    let labels = edges.iter().filter(|&&x| fg.edges[x].label.is_some()).count();
+    let labels = edges
+        .iter()
+        .filter(|&&x| fg.edges[x].label.is_some())
+        .count();
     let ports = edges
         .iter()
         .any(|&x| fg.edges[x].tail_port.defined || fg.edges[x].head_port.defined);
@@ -2329,7 +2403,12 @@ fn edgelblcmpfn(fg: &Fg, e0: EId, e1: EId) -> Ordering {
 
 /// pathplan `simpleSplineRoute` (routespl.c:168) — route tp→hp through an
 /// 8-gon (zero end-slope vectors, as in C).
-fn simple_spline_route(tp: PointF, hp: PointF, poly: &[PointF], polyline: bool) -> Option<Vec<PointF>> {
+fn simple_spline_route(
+    tp: PointF,
+    hp: PointF,
+    poly: &[PointF],
+    polyline: bool,
+) -> Option<Vec<PointF>> {
     let eps = [tp, hp];
     let pl = pshortestpath(poly, &eps).ok()?;
     if polyline {
@@ -2344,7 +2423,15 @@ fn simple_spline_route(tp: PointF, hp: PointF, poly: &[PointF], polyline: bool) 
 /// dotsplines.c:951 `makeSimpleFlatLabels` — adjacent flat edges with labels
 /// (no ports): first edge straight, subsequent edges octagon-routed
 /// alternately below/above with `LBL_SPACE` gaps.
-fn make_simple_flat_labels(fg: &mut Fg, _g: GId, tn: NId, hn: NId, edges: &[EId], et: SplineType, n_lbls: usize) {
+fn make_simple_flat_labels(
+    fg: &mut Fg,
+    _g: GId,
+    tn: NId,
+    hn: NId,
+    edges: &[EId],
+    et: SplineType,
+    n_lbls: usize,
+) {
     let e0 = edges[0];
     let tp = fg.nodes[tn].coord.add(fg.edges[e0].tail_port.p);
     let hp = fg.nodes[hn].coord.add(fg.edges[e0].head_port.p);
@@ -2467,7 +2554,16 @@ fn make_simple_flat_labels(fg: &mut Fg, _g: GId, tn: NId, hn: NId, edges: &[EId]
 /// dotsplines.c:1290 `makeFlatEnd` — endpoint boxes for a flat edge routed
 /// along the top.
 #[allow(clippy::too_many_arguments)]
-fn make_flat_end(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path, n: NId, e: EId, endp: &mut PathEnd, is_begin: bool) {
+fn make_flat_end(
+    fg: &mut Fg,
+    g: GId,
+    sp: &SplineInfo,
+    path: &mut Path,
+    n: NId,
+    e: EId,
+    endp: &mut PathEnd,
+    is_begin: bool,
+) {
     endp.nb = maximal_bbox(fg, g, sp, n, None, Some(e));
     endp.sidemask = TOP;
     if is_begin {
@@ -2487,7 +2583,16 @@ fn make_flat_end(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path, n: NId, 
 
 /// dotsplines.c:1305 `makeBottomFlatEnd` — the bottom-side mirror.
 #[allow(clippy::too_many_arguments)]
-fn make_bottom_flat_end(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path, n: NId, e: EId, endp: &mut PathEnd, is_begin: bool) {
+fn make_bottom_flat_end(
+    fg: &mut Fg,
+    g: GId,
+    sp: &SplineInfo,
+    path: &mut Path,
+    n: NId,
+    e: EId,
+    endp: &mut PathEnd,
+    is_begin: bool,
+) {
     endp.nb = maximal_bbox(fg, g, sp, n, None, Some(e));
     endp.sidemask = BOTTOM;
     if is_begin {
@@ -2507,7 +2612,14 @@ fn make_bottom_flat_end(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path, n
 
 /// dotsplines.c:1321 `make_flat_labeled_edge` — one labeled non-adjacent
 /// flat edge, routed through boxes around its label vnode.
-fn make_flat_labeled_edge(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path, e: EId, et: SplineType) {
+fn make_flat_labeled_edge(
+    fg: &mut Fg,
+    g: GId,
+    sp: &SplineInfo,
+    path: &mut Path,
+    e: EId,
+    et: SplineType,
+) {
     let tn = fg.edges[e].tail;
     let hn = fg.edges[e].head;
     let li = match fg.edges[e].label {
@@ -2554,8 +2666,7 @@ fn make_flat_labeled_edge(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path,
     lb.ur.y = fg.nodes[ln].coord.y + fg.nodes[ln].ht / 2.0;
     let (_, ht2t) = rank_pair(fg, g, fg.nodes[tn].rank);
     let (ht1t, _) = rank_pair(fg, g, fg.nodes[tn].rank);
-    let mut ydelta =
-        fg.nodes[ln].coord.y - ht1t - fg.nodes[tn].coord.y + ht2t;
+    let mut ydelta = fg.nodes[ln].coord.y - ht1t - fg.nodes[tn].coord.y + ht2t;
     ydelta /= 6.0;
     lb.ll.y = lb.ur.y - 5.0f64.max(ydelta);
 
@@ -2610,7 +2721,15 @@ fn make_flat_labeled_edge(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path,
 /// dotsplines.c:1425 `make_flat_bottom_edges` — flat edges whose ports put
 /// them on the bottom side, stacked downward. NOTE: `rank_t::pht1/pht2` are
 /// not in the model; `ht1`/`ht2` are used instead (documented deviation).
-fn make_flat_bottom_edges(fg: &mut Fg, g: GId, sp: &SplineInfo, path: &mut Path, edges: &[EId], e: EId, use_splines: bool) {
+fn make_flat_bottom_edges(
+    fg: &mut Fg,
+    g: GId,
+    sp: &SplineInfo,
+    path: &mut Path,
+    edges: &[EId],
+    e: EId,
+    use_splines: bool,
+) {
     let tn = fg.edges[e].tail;
     let hn = fg.edges[e].head;
     let r = fg.nodes[tn].rank;
@@ -2726,9 +2845,7 @@ fn make_self_edge(fg: &mut Fg, g: GId, edges: &[EId], sizex: f64, sizey: f64) {
     // self edge without ports, or with all ports inside/on the right, or at
     // most 1 on top and at most 1 on bottom
     let right_ok = (!tp_def && !hp_def)
-        || ((ts & LEFT == 0)
-            && (hs & LEFT == 0)
-            && (ts != hs || (ts & (TOP | BOTTOM) == 0)));
+        || ((ts & LEFT == 0) && (hs & LEFT == 0) && (ts != hs || (ts & (TOP | BOTTOM) == 0)));
     if right_ok {
         self_right(fg, g, edges, sizex, sizey);
     } else if (ts & LEFT != 0) || (hs & LEFT != 0) {
@@ -3107,7 +3224,12 @@ fn is_cycle_unique(cycles: &[Vec<NId>], visited: &[NId]) -> bool {
 }
 
 /// routespl.c `find_shortest_cycle_with_edge`.
-fn find_shortest_cycle_with_edge(cycles: &[Vec<NId>], fg: &Fg, edge: EId, min_size: usize) -> Option<Vec<NId>> {
+fn find_shortest_cycle_with_edge(
+    cycles: &[Vec<NId>],
+    fg: &Fg,
+    edge: EId,
+    min_size: usize,
+) -> Option<Vec<NId>> {
     let start = fg.edges[edge].tail;
     let end = fg.edges[edge].head;
     let mut shortest: Option<&Vec<NId>> = None;
@@ -3219,7 +3341,7 @@ mod tests {
     use super::*;
     use crate::dotgen::model::{Rank, Splines};
     use crate::dotgen::rank::dot_rank;
-    use crate::dotgen::{build, Measured};
+    use crate::dotgen::{Measured, build};
     use crate::graph::parser::parse;
 
     /// build + dot_rank, then restore the state cleanup1 cleared: the
@@ -3231,7 +3353,7 @@ mod tests {
             node: vec![(54.0, 36.0); g.nodes.len()],
             label: vec![],
             edge_label: vec![],
-                    measure: None,
+            measure: None,
         };
         let mut fg = build(&g, &measured);
         dot_rank(&mut fg, 0);
@@ -3315,7 +3437,11 @@ mod tests {
         );
         // every point lies between the two borders
         for p in &pts {
-            assert!(p.y <= 18.0 + 2.0 && p.y >= -18.0 - 2.0, "outside band: {:?}", p);
+            assert!(
+                p.y <= 18.0 + 2.0 && p.y >= -18.0 - 2.0,
+                "outside band: {:?}",
+                p
+            );
         }
         // GD_bb was grown
         let bb = fg.graphs[0].bb;
@@ -3343,7 +3469,11 @@ mod tests {
             "tail end not on a's border: {:?}",
             first
         );
-        assert!((last.y - (-18.0)).abs() < 2.0, "head end not on b's border: {:?}", last);
+        assert!(
+            (last.y - (-18.0)).abs() < 2.0,
+            "head end not on b's border: {:?}",
+            last
+        );
     }
 
     /// (b) two parallel a->b edges fan out: the routed Béziers are distinct
@@ -3373,7 +3503,12 @@ mod tests {
             m1
         );
         // the fan is centered: first edge bends left, second right
-        assert!(m0.x < 27.0 && m1.x > 27.0, "fan not centered: {:?} {:?}", m0, m1);
+        assert!(
+            m0.x < 27.0 && m1.x > 27.0,
+            "fan not centered: {:?} {:?}",
+            m0,
+            m1
+        );
     }
 
     /// (c) a self loop routed by selfRight: a 7-point two-Bézier loop
@@ -3395,7 +3530,11 @@ mod tests {
         let pts = flat_pts(spl);
         let max_x = pts.iter().map(|p| p.x).fold(f64::MIN, f64::max);
         // the loop leaves the node's right border (x = 27 + 27 = 54)
-        assert!(max_x > 52.0, "loop does not clear the node: max_x={}", max_x);
+        assert!(
+            max_x > 52.0,
+            "loop does not clear the node: max_x={}",
+            max_x
+        );
         // both endpoints at the node (center (27,0)); y bulges both ways
         let min_y = pts.iter().map(|p| p.y).fold(f64::MAX, f64::min);
         let max_y = pts.iter().map(|p| p.y).fold(f64::MIN, f64::max);
@@ -3439,12 +3578,24 @@ mod tests {
 }
 
 #[cfg(test)]
-fn shape_clip_dbg(fg: &crate::dotgen::model::Fg, n: usize, curve: &mut [PointF; 4], coord: PointF, left_inside: bool) {
-    for p in curve.iter_mut() { p.x -= coord.x; p.y -= coord.y; }
+fn shape_clip_dbg(
+    fg: &crate::dotgen::model::Fg,
+    n: usize,
+    curve: &mut [PointF; 4],
+    coord: PointF,
+    left_inside: bool,
+) {
+    for p in curve.iter_mut() {
+        p.x -= coord.x;
+        p.y -= coord.y;
+    }
     let mut sp = *curve;
     let inside = |p: PointF| crate::dotgen::splines::shape_inside(fg, n, p);
     super::arrows::bezier_clip(&mut sp, inside, left_inside);
-    for p in sp.iter_mut() { p.x += coord.x; p.y += coord.y; }
+    for p in sp.iter_mut() {
+        p.x += coord.x;
+        p.y += coord.y;
+    }
     *curve = sp;
 }
 
@@ -3453,7 +3604,7 @@ mod debug_tmp {
     use super::*;
     use crate::dotgen::model::Rank;
     use crate::dotgen::rank::dot_rank;
-    use crate::dotgen::{build, Measured};
+    use crate::dotgen::{Measured, build};
     use crate::graph::parser::parse;
 
     #[test]
@@ -3471,46 +3622,89 @@ mod debug_tmp {
         fg.nodes[0].out.push(ve);
         fg.nodes[1].in_.push(ve);
         fg.graphs[0].rank = vec![
-            Rank { n: 1, v: vec![0], valid: true, ht1: 18.0, ht2: 18.0, ..Default::default() },
-            Rank { n: 1, v: vec![1], valid: true, ht1: 18.0, ht2: 18.0, ..Default::default() },
+            Rank {
+                n: 1,
+                v: vec![0],
+                valid: true,
+                ht1: 18.0,
+                ht2: 18.0,
+                ..Default::default()
+            },
+            Rank {
+                n: 1,
+                v: vec![1],
+                valid: true,
+                ht1: 18.0,
+                ht2: 18.0,
+                ..Default::default()
+            },
         ];
         fg.nodes[0].coord = PointF::new(27.0, 36.0);
         fg.nodes[1].coord = PointF::new(27.0, -36.0);
         fg.nodes[0].order = 0;
         fg.nodes[1].order = 0;
-        for n in fg.nodes.iter_mut() { n.mval = n.rw; }
+        for n in fg.nodes.iter_mut() {
+            n.mval = n.rw;
+        }
         setflags(&mut fg, ve, REGULAREDGE, FWDEDGE, MAINGRAPH);
 
         // hand-build the same path make_regular_edge would build, and print
         // the RAW routesplines_ output
-        let mut sp = SplineInfo { splinesep: 18.0 / 4.0, multisep: 18.0, ..Default::default() };
-        sp.left_bound = -32.0; sp.right_bound = 86.0;
+        let mut sp = SplineInfo {
+            splinesep: 18.0 / 4.0,
+            multisep: 18.0,
+            ..Default::default()
+        };
+        sp.left_bound = -32.0;
+        sp.right_bound = 86.0;
         sp.rank_box = vec![BoxF::default(); 2];
         let mut path = Path::default();
         let mut tend = PathEnd::default();
-        tend.nb = BoxF { ll: PointF::new(-4.0, 18.0), ur: PointF::new(86.0, 54.0) };
+        tend.nb = BoxF {
+            ll: PointF::new(-4.0, 18.0),
+            ur: PointF::new(86.0, 54.0),
+        };
         beginpath(&mut fg, 0, &mut path, ve, REGULAREDGE, &mut tend, false);
         println!("start.p = {:?}", path.start.p);
         let rb = rank_box(&mut fg, 0, &mut sp, 0);
         println!("rank_box = {:?}", rb);
         let mut hend = PathEnd::default();
-        hend.nb = BoxF { ll: PointF::new(-4.0, -54.0), ur: PointF::new(86.0, -18.0) };
+        hend.nb = BoxF {
+            ll: PointF::new(-4.0, -54.0),
+            ur: PointF::new(86.0, -18.0),
+        };
         endpath(&mut fg, 0, &mut path, ve, REGULAREDGE, &mut hend, false);
         println!("end.p = {:?}", path.end.p);
-        for b in &tend.boxes { add_box(&mut path, *b); }
+        for b in &tend.boxes {
+            add_box(&mut path, *b);
+        }
         add_box(&mut path, rb);
-        for b in hend.boxes.iter().rev() { add_box(&mut path, *b); }
+        for b in hend.boxes.iter().rev() {
+            add_box(&mut path, *b);
+        }
         println!("boxes = {:?}", path.boxes);
         let mut ps = routesplines_(&mut path, false).unwrap();
         println!("raw ps = {:?}", ps);
         // replicate splines.rs clip_and_install step by step
         let pn = ps.len();
-        let tn = 0usize; let hn = 1usize;
+        let tn = 0usize;
+        let hn = 1usize;
         let mut start = 0usize;
         while start < pn - 4 {
-            let p2 = PointF::new(ps[start + 3].x - fg.nodes[tn].coord.x, ps[start + 3].y - fg.nodes[tn].coord.y);
-            println!("tail check ps[{}]={:?} rel={:?} inside={}", start + 3, ps[start + 3], p2, crate::dotgen::splines::shape_inside(&fg, tn, p2));
-            if !crate::dotgen::splines::shape_inside(&fg, tn, p2) { break; }
+            let p2 = PointF::new(
+                ps[start + 3].x - fg.nodes[tn].coord.x,
+                ps[start + 3].y - fg.nodes[tn].coord.y,
+            );
+            println!(
+                "tail check ps[{}]={:?} rel={:?} inside={}",
+                start + 3,
+                ps[start + 3],
+                p2,
+                crate::dotgen::splines::shape_inside(&fg, tn, p2)
+            );
+            if !crate::dotgen::splines::shape_inside(&fg, tn, p2) {
+                break;
+            }
             start += 3;
         }
         println!("start = {}", start);
@@ -3520,8 +3714,13 @@ mod debug_tmp {
         ps[start..start + 4].copy_from_slice(&curve);
         let mut end = pn - 4;
         while end > 0 {
-            let p2 = PointF::new(ps[end].x - fg.nodes[hn].coord.x, ps[end].y - fg.nodes[hn].coord.y);
-            if !crate::dotgen::splines::shape_inside(&fg, hn, p2) { break; }
+            let p2 = PointF::new(
+                ps[end].x - fg.nodes[hn].coord.x,
+                ps[end].y - fg.nodes[hn].coord.y,
+            );
+            if !crate::dotgen::splines::shape_inside(&fg, hn, p2) {
+                break;
+            }
             end -= 3;
         }
         println!("end = {}", end);

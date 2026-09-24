@@ -102,12 +102,12 @@ fn search_component(fg: &mut Fg, g: GId, start: NId, cmark: usize) {
                 let seg: Vec<EId> = ids[start..start + len].to_vec();
                 start += len;
                 for &e in seg.iter().rev() {
-                let (t, h) = (fg.edges[e].tail, fg.edges[e].head);
-                let other = if h == n { t } else { h };
-                if fg.nodes[other].mark != cmark && fg.uf_find(other) == other {
-                    fg.nodes[other].mark = cmark + 1;
-                    stk.push(other);
-                }
+                    let (t, h) = (fg.edges[e].tail, fg.edges[e].head);
+                    let other = if h == n { t } else { h };
+                    if fg.nodes[other].mark != cmark && fg.uf_find(other) == other {
+                        fg.nodes[other].mark = cmark + 1;
+                        stk.push(other);
+                    }
                 }
             }
         }
@@ -141,24 +141,20 @@ fn collapse_rankset(fg: &mut Fg, g: GId, subg: GId, kind: RankType) {
             fg.nodes[v].ranktype = rt;
         }
         match kind {
-            RankType::MinRank | RankType::SourceRank => {
-                match fg.graphs[g].minset {
-                    None => fg.graphs[g].minset = Some(u),
-                    Some(m) => {
-                        let r = fg.uf_union(m, u);
-                        fg.graphs[g].minset = Some(r);
-                    }
+            RankType::MinRank | RankType::SourceRank => match fg.graphs[g].minset {
+                None => fg.graphs[g].minset = Some(u),
+                Some(m) => {
+                    let r = fg.uf_union(m, u);
+                    fg.graphs[g].minset = Some(r);
                 }
-            }
-            RankType::MaxRank | RankType::SinkRank => {
-                match fg.graphs[g].maxset {
-                    None => fg.graphs[g].maxset = Some(u),
-                    Some(m) => {
-                        let r = fg.uf_union(m, u);
-                        fg.graphs[g].maxset = Some(r);
-                    }
+            },
+            RankType::MaxRank | RankType::SinkRank => match fg.graphs[g].maxset {
+                None => fg.graphs[g].maxset = Some(u),
+                Some(m) => {
+                    let r = fg.uf_union(m, u);
+                    fg.graphs[g].maxset = Some(r);
                 }
-            }
+            },
             _ => {}
         }
         match kind {
@@ -390,8 +386,15 @@ fn rank1(fg: &mut Fg, g: GId) {
     let tbbalance = fg.graphs[g].tbbalance.clone();
     for comp in fg.graphs[g].comp.clone() {
         let nodes = component_nodes(fg, comp);
-        super::ns::rank2(fg, nodes, balance, maxiter, search_size, tbbalance.as_deref())
-            .expect("network simplex failed");
+        super::ns::rank2(
+            fg,
+            nodes,
+            balance,
+            maxiter,
+            search_size,
+            tbbalance.as_deref(),
+        )
+        .expect("network simplex failed");
     }
 }
 
@@ -423,8 +426,7 @@ fn expand_ranksets(fg: &mut Fg, g: GId, cl_type: ClustType) {
             if fg.graphs[g].minrank > r {
                 fg.graphs[g].minrank = r;
             }
-            if fg.nodes[n].ranktype != RankType::Normal
-                && fg.nodes[n].ranktype != RankType::LeafSet
+            if fg.nodes[n].ranktype != RankType::Normal && fg.nodes[n].ranktype != RankType::LeafSet
             {
                 fg.uf_singleton(n);
             }

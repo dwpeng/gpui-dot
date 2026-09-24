@@ -127,19 +127,24 @@ fn register_wheel(interaction: &Interaction<'_>, window: &mut Window) {
                 };
                 view.update(cx, |view, cx| {
                     let factor = 1.0 + delta.y.as_f32() * 0.0018;
-                    let next_zoom = (view.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-                    if (next_zoom - view.zoom).abs() < 1e-4 {
+                    let Some(tab) = view.active_mut() else { return };
+                    let next_zoom = (tab.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                    if (next_zoom - tab.zoom).abs() < 1e-4 {
                         return;
                     }
-                    view.pan = point(
+                    tab.pan = point(
                         e.position.x - transform.origin.x - px(wx * next_zoom),
                         e.position.y - transform.origin.y - px(wy * next_zoom),
                     );
-                    view.zoom = next_zoom;
+                    tab.zoom = next_zoom;
                     // The world moved under a stationary cursor: the node
                     // under it (and the tooltip that follows it) may differ.
-                    let now = ViewTransform { pan: view.pan, zoom: view.zoom, ..transform };
-                    hover_cell.set(hover_at(view.document.as_ref(), &now, e.position));
+                    let now = ViewTransform {
+                        pan: tab.pan,
+                        zoom: tab.zoom,
+                        ..transform
+                    };
+                    hover_cell.set(hover_at(tab.document.as_ref(), &now, e.position));
                     mouse_cell.set(Some(e.position));
                     cx.notify();
                 });
@@ -157,9 +162,13 @@ fn register_wheel(interaction: &Interaction<'_>, window: &mut Window) {
                     } else {
                         (-delta.x, -delta.y)
                     };
-                    view.pan = point(view.pan.x + dx, view.pan.y + dy);
-                    let now = ViewTransform { pan: view.pan, ..transform };
-                    hover_cell.set(hover_at(view.document.as_ref(), &now, e.position));
+                    let Some(tab) = view.active_mut() else { return };
+                    tab.pan = point(tab.pan.x + dx, tab.pan.y + dy);
+                    let now = ViewTransform {
+                        pan: tab.pan,
+                        ..transform
+                    };
+                    hover_cell.set(hover_at(tab.document.as_ref(), &now, e.position));
                     mouse_cell.set(Some(e.position));
                     cx.notify();
                 });
@@ -233,25 +242,26 @@ fn register_press(interaction: &Interaction<'_>, window: &mut Window) {
                 return;
             };
             view.update(cx, |view, cx| {
+                let Some(tab) = view.active_mut() else { return };
                 if reset {
                     if let Some(index) = hit
-                        && let Some(document) = view.document.clone()
+                        && let Some(document) = tab.document.clone()
                         && let Some(reset) = document.clear_node_offset(index)
                     {
-                        view.document = Some(Rc::new(reset));
+                        tab.document = Some(Rc::new(reset));
                     }
-                    view.selection = hit;
-                    view.node_drag = None;
+                    tab.selection = hit;
+                    tab.node_drag = None;
                     drag_cell.set(None);
-                    hover_cell.set(hover_at(view.document.as_ref(), &transform, e.position));
+                    hover_cell.set(hover_at(tab.document.as_ref(), &transform, e.position));
                     mouse_cell.set(Some(e.position));
                     cx.notify();
                     return;
                 }
-                view.selection = hit;
-                view.node_drag = node_drag;
+                tab.selection = hit;
+                tab.node_drag = node_drag;
                 if node_drag.is_none() {
-                    drag_cell.set(Some((e.position, view.pan)));
+                    drag_cell.set(Some((e.position, tab.pan)));
                 }
                 cx.notify();
             });
@@ -278,7 +288,8 @@ fn register_move(interaction: &Interaction<'_>, window: &mut Window) {
                 return;
             };
             view.update(cx, |view, cx| {
-                if let Some(node_drag) = view.node_drag.as_mut() {
+                let Some(tab) = view.active_mut() else { return };
+                if let Some(node_drag) = tab.node_drag.as_mut() {
                     let (wx, wy) = transform.to_world(e.position);
                     let pos = point(wx - node_drag.grab.x, wy - node_drag.grab.y);
                     // A press/release that never left the threshold is a
@@ -288,12 +299,12 @@ fn register_move(interaction: &Interaction<'_>, window: &mut Window) {
                         node_drag.moved = true;
                     }
                     node_drag.pos = pos;
-                    view.selection = Some(node_drag.node);
+                    tab.selection = Some(node_drag.node);
                     mouse_cell.set(Some(e.position));
                     cx.notify();
                 } else if let Some((start_mouse, start_pan)) = drag_cell.get() {
                     let delta = point(e.position.x - start_mouse.x, e.position.y - start_mouse.y);
-                    view.pan = point(start_pan.x + delta.x, start_pan.y + delta.y);
+                    tab.pan = point(start_pan.x + delta.x, start_pan.y + delta.y);
                     // The graph slides under a stationary cursor while
                     // panning, so no node stays hovered: hide the tooltip and
                     // let the release (or the next move) re-hit-test.
@@ -343,21 +354,22 @@ fn register_release(interaction: &Interaction<'_>, window: &mut Window) {
                 return;
             };
             view.update(cx, |view, cx| {
-                if let Some(drag) = view.node_drag.take() {
+                let Some(tab) = view.active_mut() else { return };
+                if let Some(drag) = tab.node_drag.take() {
                     if drag.moved {
                         // Commit the free drop position (exactly where the
                         // cursor left the node — no snapping), as an offset
                         // from its laid-out box; every edge touching it
                         // re-anchors to the moved border when the next frame
                         // paints.
-                        if let Some(document) = view.document.clone()
+                        if let Some(document) = tab.document.clone()
                             && let Some(base) = document.node_box(drag.node)
                             && let Some(updated) = document.with_node_offset(
                                 drag.node,
                                 (drag.pos.x - base.x, drag.pos.y - base.y),
                             )
                         {
-                            view.document = Some(Rc::new(updated));
+                            tab.document = Some(Rc::new(updated));
                         }
                         cx.notify();
                     }
@@ -369,7 +381,7 @@ fn register_release(interaction: &Interaction<'_>, window: &mut Window) {
                 }
                 // Refresh hover for the drop/pan end position: the pointer is
                 // where it was released, but the boxes underneath it moved.
-                hover_cell.set(hover_at(view.document.as_ref(), &transform, e.position));
+                hover_cell.set(hover_at(tab.document.as_ref(), &transform, e.position));
                 mouse_cell.set(Some(e.position));
                 window.refresh();
             });
@@ -427,8 +439,18 @@ mod tests {
     #[test]
     fn hit_test_prefers_the_topmost_node() {
         let boxes = [
-            NodeBox { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
-            NodeBox { x: 50.0, y: 50.0, w: 100.0, h: 100.0 },
+            NodeBox {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+            NodeBox {
+                x: 50.0,
+                y: 50.0,
+                w: 100.0,
+                h: 100.0,
+            },
         ];
         let t = transform();
         // Inside both: the later (painted-on-top) node wins.
@@ -449,16 +471,30 @@ mod tests {
         let press = at(100.0, 100.0);
         assert!(!past_drag_threshold(press, at(100.0, 100.0)));
         assert!(!past_drag_threshold(press, at(102.0, 101.0)), "jitter");
-        assert!(!past_drag_threshold(press, at(100.0 + DRAG_THRESHOLD, 100.0)));
-        assert!(past_drag_threshold(press, at(100.0 + DRAG_THRESHOLD + 0.5, 100.0)));
-        assert!(past_drag_threshold(press, at(100.0, 92.0)), "vertical travel");
+        assert!(!past_drag_threshold(
+            press,
+            at(100.0 + DRAG_THRESHOLD, 100.0)
+        ));
+        assert!(past_drag_threshold(
+            press,
+            at(100.0 + DRAG_THRESHOLD + 0.5, 100.0)
+        ));
+        assert!(
+            past_drag_threshold(press, at(100.0, 92.0)),
+            "vertical travel"
+        );
     }
 
     /// The hit test runs in screen space through the view transform, so pan
     /// and zoom must be honored.
     #[test]
     fn hit_test_follows_pan_and_zoom() {
-        let boxes = [NodeBox { x: 10.0, y: 20.0, w: 40.0, h: 30.0 }];
+        let boxes = [NodeBox {
+            x: 10.0,
+            y: 20.0,
+            w: 40.0,
+            h: 30.0,
+        }];
         let t = ViewTransform {
             origin: point(px(5.0), px(7.0)),
             pan: point(px(100.0), px(50.0)),

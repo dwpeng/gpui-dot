@@ -11,8 +11,18 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 gpui-kit = "0.6.6"
+rust-embed = { version = "8", features = ["debug-embed"] }
+tikv-jemallocator = { version = "0.7.0", features = [
+    "unprefixed_malloc_on_supported_platforms",
+] }
+
+[dev-dependencies]
+gpui-kit = { version = "0.6.6", features = ["test-support"] }
+
 
 [profile.release]
+debug = false
+strip = "none"
 lto = true
 codegen-units = 1
 panic = "abort"

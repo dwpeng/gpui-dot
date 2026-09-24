@@ -1,0 +1,26 @@
+[timing] build: 0.001s
+[timing]   ns::rank2: finished 0 pivots in 0.000s
+[timing] rank: 0.001s
+[timing]   mincross::init: 0.001s
+[timing]     mincross::improve(pass 0): 0.000s total (0 steps: mincross_step 0.000s, ncross 0.000s)
+[timing]     mincross::final-transpose: 0.000s
+[timing]   mincross::components: 0.000s
+[timing]   mincross::merge2: 0.000s
+[timing]   mincross::cleanup: 0.000s
+[timing] mincross: 0.001s
+[timing]   position::set_ycoords: 0.000s
+[timing]   position::mark_lowclusters: 0.000s
+[timing]   position::expand_leaves: 0.000s
+[timing]   position::flat_edges: 0.000s
+[timing]   position::create_aux_edges: 0.001s
+[timing]   ns::rank2: finished 0 pivots in 0.000s
+[timing]   position::rank2: 0.001s
+[timing]   position::set_xcoords+aspect: 0.000s
+[timing] position: 0.002s
+[timing] sameports: 0.000s
+[timing]   splines::classify+sort: 0.000s
+[timing]   splines::route: 0.006s (0 self, 0 flat, 999 regular, 0 straight groups)
+[timing] splines: 0.007s
+[timing] postprocess: 0.000s
+[timing] dot_layout: 0.011s
+[timing] to_layout: 0.001s

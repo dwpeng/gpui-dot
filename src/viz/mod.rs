@@ -266,9 +266,7 @@ impl Element for GraphCanvas {
             let background = self
                 .document
                 .as_ref()
-                .and_then(|d| {
-                    crate::viz::dotview::color_of(d.graph.graph_attrs().get("bgcolor"))
-                })
+                .and_then(|d| crate::viz::dotview::color_of(d.graph.graph_attrs().get("bgcolor")))
                 .unwrap_or_else(|| cx.theme().background);
             primitives::rounded_rect(window, bounds, px(0.0), background, None);
             if self.show_grid {

@@ -157,9 +157,7 @@ impl DotView {
     /// and per-label text extents.
     pub fn build(layout: &DotLayout, graph: &Graph, rank_dir: RankDir) -> Self {
         let bb = layout.bb;
-        let map = |p: dotgen::geom::PointF| {
-            ((p.x - bb.ll.x) as f32, (bb.ur.y - p.y) as f32)
-        };
+        let map = |p: dotgen::geom::PointF| ((p.x - bb.ll.x) as f32, (bb.ur.y - p.y) as f32);
 
         let nodes: Vec<ViewNode> = layout
             .nodes
@@ -248,78 +246,84 @@ impl DotView {
             return Cow::Borrowed(&self.edges);
         }
         Cow::Owned(
-        self.edges
-            .iter()
-            .map(|e| {
-                let tail_moved = offsets.get(e.tail).copied().unwrap_or((0.0, 0.0));
-                let head_moved = offsets.get(e.head).copied().unwrap_or((0.0, 0.0));
-                if tail_moved == (0.0, 0.0) && head_moved == (0.0, 0.0) {
-                    return e.clone();
-                }
-                let mut moved = e.clone();
-                let node = |i: usize| -> (f32, f32, f32, f32) {
-                    let n = &self.nodes[i];
-                    let (dx, dy) = offsets.get(i).copied().unwrap_or((0.0, 0.0));
-                    (n.x + dx, n.y + dy, n.w, n.h)
-                };
-                // dot's end geometry: the arrow *tip* sits on the node border
-                // and the spline stops at the arrow's *base*, pulled back
-                // along the approach direction (arrow_clip). Both the tip and
-                // the pulled-back endpoint move with the dragged node, so the
-                // arrowhead follows the node and the line never pokes out
-                // past it.
-                let mut tail_tip = None;
-                let mut head_tip = None;
-                if tail_moved != (0.0, 0.0) {
-                    let from = border_point(node(e.tail), far_end(e, false));
-                    if let Some(first) = moved.segments.first_mut() {
-                        first[1] = lerp(from, first[3], 1.0 / 3.0);
-                        first[0] = pull_back(from, first[1], e.arrow_len(e.sflag));
+            self.edges
+                .iter()
+                .map(|e| {
+                    let tail_moved = offsets.get(e.tail).copied().unwrap_or((0.0, 0.0));
+                    let head_moved = offsets.get(e.head).copied().unwrap_or((0.0, 0.0));
+                    if tail_moved == (0.0, 0.0) && head_moved == (0.0, 0.0) {
+                        return e.clone();
                     }
-                    tail_tip = Some(from);
-                }
-                if head_moved != (0.0, 0.0) {
-                    let to = border_point(node(e.head), far_end(e, true));
-                    if let Some(last) = moved.segments.last_mut() {
-                        last[2] = lerp(last[0], to, 2.0 / 3.0);
-                        last[3] = pull_back(to, last[2], e.arrow_len(e.eflag));
+                    let mut moved = e.clone();
+                    let node = |i: usize| -> (f32, f32, f32, f32) {
+                        let n = &self.nodes[i];
+                        let (dx, dy) = offsets.get(i).copied().unwrap_or((0.0, 0.0));
+                        (n.x + dx, n.y + dy, n.w, n.h)
+                    };
+                    // dot's end geometry: the arrow *tip* sits on the node border
+                    // and the spline stops at the arrow's *base*, pulled back
+                    // along the approach direction (arrow_clip). Both the tip and
+                    // the pulled-back endpoint move with the dragged node, so the
+                    // arrowhead follows the node and the line never pokes out
+                    // past it.
+                    let mut tail_tip = None;
+                    let mut head_tip = None;
+                    if tail_moved != (0.0, 0.0) {
+                        let from = border_point(node(e.tail), far_end(e, false));
+                        if let Some(first) = moved.segments.first_mut() {
+                            first[1] = lerp(from, first[3], 1.0 / 3.0);
+                            first[0] = pull_back(from, first[1], e.arrow_len(e.sflag));
+                        }
+                        tail_tip = Some(from);
                     }
-                    head_tip = Some(to);
-                }
-                let tail_tip = tail_tip.unwrap_or_else(|| {
-                    if e.sflag != 0 { e.tip(false) } else { moved.segments.first().map(|s| s[0]).unwrap_or((0.0, 0.0)) }
-                });
-                let head_tip = head_tip.unwrap_or_else(|| {
-                    if e.eflag != 0 { e.tip(true) } else { moved.segments.last().map(|s| s[3]).unwrap_or((0.0, 0.0)) }
-                });
-                moved.arrows = build_arrow_parts(
-                    &moved.segments,
-                    e.sflag,
-                    e.eflag,
-                    e.arrowsize,
-                    tail_tip,
-                    head_tip,
-                );
-                // The label follows the re-routed spline: dot centers edge
-                // labels on the spline's midpoint, and that midpoint moves by
-                // the mean of the endpoint offsets (the full offset when both
-                // ends move together).
-                if let Some(label) = moved.label.as_mut() {
-                    label.center.0 += (tail_moved.0 + head_moved.0) / 2.0;
-                    label.center.1 += (tail_moved.1 + head_moved.1) / 2.0;
-                }
-                moved
-            })
-            .collect())
+                    if head_moved != (0.0, 0.0) {
+                        let to = border_point(node(e.head), far_end(e, true));
+                        if let Some(last) = moved.segments.last_mut() {
+                            last[2] = lerp(last[0], to, 2.0 / 3.0);
+                            last[3] = pull_back(to, last[2], e.arrow_len(e.eflag));
+                        }
+                        head_tip = Some(to);
+                    }
+                    let tail_tip = tail_tip.unwrap_or_else(|| {
+                        if e.sflag != 0 {
+                            e.tip(false)
+                        } else {
+                            moved.segments.first().map(|s| s[0]).unwrap_or((0.0, 0.0))
+                        }
+                    });
+                    let head_tip = head_tip.unwrap_or_else(|| {
+                        if e.eflag != 0 {
+                            e.tip(true)
+                        } else {
+                            moved.segments.last().map(|s| s[3]).unwrap_or((0.0, 0.0))
+                        }
+                    });
+                    moved.arrows = build_arrow_parts(
+                        &moved.segments,
+                        e.sflag,
+                        e.eflag,
+                        e.arrowsize,
+                        tail_tip,
+                        head_tip,
+                    );
+                    // The label follows the re-routed spline: dot centers edge
+                    // labels on the spline's midpoint, and that midpoint moves by
+                    // the mean of the endpoint offsets (the full offset when both
+                    // ends move together).
+                    if let Some(label) = moved.label.as_mut() {
+                        label.center.0 += (tail_moved.0 + head_moved.0) / 2.0;
+                        label.center.1 += (tail_moved.1 + head_moved.1) / 2.0;
+                    }
+                    moved
+                })
+                .collect(),
+        )
     }
 }
 
 fn far_end(e: &ViewEdge, tail_side: bool) -> (f32, f32) {
     if tail_side {
-        e.segments
-            .last()
-            .map(|s| s[3])
-            .unwrap_or((0.0, 0.0))
+        e.segments.last().map(|s| s[3]).unwrap_or((0.0, 0.0))
     } else {
         e.segments.first().map(|s| s[0]).unwrap_or((0.0, 0.0))
     }
@@ -397,10 +401,9 @@ fn view_node(
     // Records draw as a rectangle with internal dividers and per-field text.
     let record = n.record.as_ref().map(|r| {
         // `record_parts` is node-relative; lift it onto the node's centre.
-        let at = |p: dotgen::geom::PointF| map(dotgen::geom::PointF::new(
-            n.coord.x + p.x,
-            n.coord.y + p.y,
-        ));
+        let at = |p: dotgen::geom::PointF| {
+            map(dotgen::geom::PointF::new(n.coord.x + p.x, n.coord.y + p.y))
+        };
         let fields = r
             .fields
             .iter()
@@ -416,11 +419,7 @@ fn view_node(
                 )
             })
             .collect();
-        let dividers = r
-            .dividers
-            .iter()
-            .map(|(a, b)| (at(*a), at(*b)))
-            .collect();
+        let dividers = r.dividers.iter().map(|(a, b)| (at(*a), at(*b))).collect();
         ViewRecord { fields, dividers }
     });
     let shape_name = if record.is_some() && shape_name == "Mrecord" {
@@ -433,10 +432,7 @@ fn view_node(
     // the table defaults. `shape=polygon` has table `sides` 0, so painting
     // from the bare table entry would turn every user polygon into a box or
     // an ellipse.
-    let desc = dotgen::shapes::resolved_desc(
-        &dotgen::shapes::shape_of(&shape_name),
-        &n.shape,
-    );
+    let desc = dotgen::shapes::resolved_desc(&dotgen::shapes::shape_of(&shape_name), &n.shape);
     let shape = if record.is_some() && !style.invisible {
         // the record outline is its bounding rectangle
         NodeShape::Rect(vec![(x, y, w, h)])
@@ -453,14 +449,7 @@ fn view_node(
     } else {
         // Plain rings first: `style=rounded` would replace a box's four
         // corners with arc samples, and the rect check needs the raw corners.
-        let polygons = dotgen::shapes::shape_vertices(
-            &desc,
-            n.lw,
-            n.rw,
-            n.ht,
-            n.penwidth,
-            false,
-        );
+        let polygons = dotgen::shapes::shape_vertices(&desc, n.lw, n.rw, n.ht, n.penwidth, false);
         if polygons.is_empty() {
             NodeShape::Ellipse(ellipse_rings_world(&desc, n))
         } else if let Some(rects) = rect_rings(&polygons) {
@@ -480,7 +469,12 @@ fn view_node(
                             n.coord.x + (x + w) as f64,
                             n.coord.y + (y + h) as f64,
                         ));
-                        (a.0.min(b.0), a.1.min(b.1), (b.0 - a.0).abs(), (b.1 - a.1).abs())
+                        (
+                            a.0.min(b.0),
+                            a.1.min(b.1),
+                            (b.0 - a.0).abs(),
+                            (b.1 - a.1).abs(),
+                        )
                     })
                     .collect(),
             )
@@ -495,7 +489,9 @@ fn view_node(
                     .into_iter()
                     .map(|ring| {
                         ring.into_iter()
-                            .map(|p| map(dotgen::geom::PointF::new(n.coord.x + p.x, n.coord.y + p.y)))
+                            .map(|p| {
+                                map(dotgen::geom::PointF::new(n.coord.x + p.x, n.coord.y + p.y))
+                            })
                             .collect()
                     })
                     .collect(),
@@ -538,10 +534,7 @@ fn view_node(
 
 /// Drawable periphery half-extents for an ellipse-family node: the rings
 /// `ellipse_rings` returns, minus the penwidth/2 spline-clip ring.
-fn ellipse_rings_world(
-    desc: &dotgen::shapes::ShapeDesc,
-    n: &NodeOut,
-) -> Vec<(f32, f32)> {
+fn ellipse_rings_world(desc: &dotgen::shapes::ShapeDesc, n: &NodeOut) -> Vec<(f32, f32)> {
     let rings = dotgen::shapes::ellipse_rings(desc, n.lw, n.rw, n.ht, n.penwidth);
     let drawn = rings.len().min(n.shape.peripheries.max(1) as usize);
     rings[..drawn]
@@ -561,7 +554,10 @@ fn rect_rings(rings: &[Vec<dotgen::geom::PointF>]) -> Option<Vec<(f32, f32, f32,
             let mut unique: Vec<(f32, f32)> = Vec::with_capacity(4);
             for p in ring {
                 let (x, y) = (p.x as f32, p.y as f32);
-                if !unique.iter().any(|&(ux, uy)| (ux - x).abs() < 1e-4 && (uy - y).abs() < 1e-4) {
+                if !unique
+                    .iter()
+                    .any(|&(ux, uy)| (ux - x).abs() < 1e-4 && (uy - y).abs() < 1e-4)
+                {
                     unique.push((x, y));
                 }
             }
@@ -619,30 +615,24 @@ fn view_edge(
     let segments: Vec<[(f32, f32); 4]> = e
         .segments
         .iter()
-        .map(|s| {
-            [
-                map(s[0]),
-                map(s[1]),
-                map(s[2]),
-                map(s[3]),
-            ]
-        })
+        .map(|s| [map(s[0]), map(s[1]), map(s[2]), map(s[3])])
         .collect();
     let arrowsize = late_double(attrs.get("arrowsize"), 1.0);
     // dot records the true tip anchors in the Bézier (`bezier.sp`/`.ep`); the
     // routed points end at the arrow's *base*, so the head must be placed at
     // `ep` (and the tail at `sp`) or the arrowhead lands inside the channel.
-    let tail_tip = if e.sflag != 0 { map(e.sp) } else { segments.first().map(|s| s[0]).unwrap_or((0.0, 0.0)) };
-    let head_tip = if e.eflag != 0 { map(e.ep) } else { segments.last().map(|s| s[3]).unwrap_or((0.0, 0.0)) };
+    let tail_tip = if e.sflag != 0 {
+        map(e.sp)
+    } else {
+        segments.first().map(|s| s[0]).unwrap_or((0.0, 0.0))
+    };
+    let head_tip = if e.eflag != 0 {
+        map(e.ep)
+    } else {
+        segments.last().map(|s| s[3]).unwrap_or((0.0, 0.0))
+    };
     let (stip, etip) = (tail_tip, head_tip);
-    let arrows = build_arrow_parts(
-        &segments,
-        e.sflag,
-        e.eflag,
-        arrowsize,
-        tail_tip,
-        head_tip,
-    );
+    let arrows = build_arrow_parts(&segments, e.sflag, e.eflag, arrowsize, tail_tip, head_tip);
     ViewEdge {
         tail: e.tail,
         head: e.head,
@@ -867,7 +857,6 @@ fn parse_hsv(value: &str) -> Option<(f32, f32, f32)> {
     Some((h, s, v))
 }
 
-
 #[cfg(test)]
 mod drag_tests {
     use super::*;
@@ -880,7 +869,11 @@ mod drag_tests {
             edge_label: vec![None; graph.edges.len()],
             measure: None,
         };
-        DotView::build(&crate::dotgen::layout(&graph, &measured), &graph, RankDir::TB)
+        DotView::build(
+            &crate::dotgen::layout(&graph, &measured),
+            &graph,
+            RankDir::TB,
+        )
     }
 
     /// The apex of a NORM arrowhead polygon (middle vertex of `a[1..4]`).
@@ -914,19 +907,23 @@ mod drag_tests {
         let moved = &edges[0];
         // build_arrow_parts emits the head arrow first, then the tail arrow.
         let head_arrow = &moved.arrows[0];
-        let to = border_point(
-            (n.x + 100.0, n.y + 60.0, n.w, n.h),
-            far_end(e, true),
+        let to = border_point((n.x + 100.0, n.y + 60.0, n.w, n.h), far_end(e, true));
+        assert!(
+            (apex(head_arrow).0 - to.0).abs() < 2.0 && (apex(head_arrow).1 - to.1).abs() < 2.0,
+            "head apex {:?} must sit on the moved border {:?}",
+            apex(head_arrow),
+            to
         );
-        assert!((apex(head_arrow).0 - to.0).abs() < 2.0 && (apex(head_arrow).1 - to.1).abs() < 2.0,
-            "head apex {:?} must sit on the moved border {:?}", apex(head_arrow), to);
         // (a hair short of the exact anchor: arrows.c's miter delta_tip pulls
         // the apex back ~penwidth/2·scale — the laid-out arrow carries the
         // same offset, so the visual tip still lands on the border.)
         // … while the unmoved tail arrow stays on dot's own anchor (again
         // modulo the miter delta_tip).
         let tail_arrow = moved.arrows.last().unwrap();
-        assert!((apex(tail_arrow).0 - e.stip.0).abs() < 2.0 && (apex(tail_arrow).1 - e.stip.1).abs() < 2.0);
+        assert!(
+            (apex(tail_arrow).0 - e.stip.0).abs() < 2.0
+                && (apex(tail_arrow).1 - e.stip.1).abs() < 2.0
+        );
     }
 
     /// While a node is dragged, the spline must stop at the arrow's *base*
@@ -945,7 +942,10 @@ mod drag_tests {
         let gap = ((to.0 - end.0).powi(2) + (to.1 - end.1).powi(2)).sqrt();
         let want = e.arrow_len(e.eflag) as f32;
         assert!(want > 0.5, "a NORM arrow pulls the spline back");
-        assert!((gap - want).abs() < 1e-2, "spline must stop {want}px short of the border tip, gap {gap}");
+        assert!(
+            (gap - want).abs() < 1e-2,
+            "spline must stop {want}px short of the border tip, gap {gap}"
+        );
 
         // And the tail side mirrors it when the tail node moves.
         let edges = v.edges_with_offsets(&moved_by(-70.0, -30.0)[..]);
@@ -956,7 +956,10 @@ mod drag_tests {
         let start = moved.segments.first().unwrap()[0];
         let gap = ((from.0 - start.0).powi(2) + (from.1 - start.1).powi(2)).sqrt();
         let want = e.arrow_len(e.sflag) as f32;
-        assert!((gap - want).abs() < 1e-2, "tail spline must stop {want}px short of the border tip, gap {gap}");
+        assert!(
+            (gap - want).abs() < 1e-2,
+            "tail spline must stop {want}px short of the border tip, gap {gap}"
+        );
     }
 }
 

@@ -74,11 +74,11 @@
 
 use std::collections::VecDeque;
 
-use super::cluster;
 use super::classes::{
     class2, delete_flat_edge, find_flat_edge, flat_edge, merge_oneway, new_virtual_edge,
 };
-use super::model::{EdgeType, EId, Fg, GId, NId, NodeType, RankType, MC_SCALE};
+use super::cluster;
+use super::model::{EId, EdgeType, Fg, GId, MC_SCALE, NId, NodeType, RankType};
 use super::position;
 use super::position::rank_row_index;
 use super::rank;
@@ -116,11 +116,39 @@ fn matrix_new(rows: usize, cols: usize) -> Vec<Vec<bool>> {
 }
 
 /// `matrix_get` (mincross.c:51-66) — out-of-range ⇒ `false`.
+#[cfg(test)]
+#[allow(dead_code)]
 fn matrix_get(me: &Option<Vec<Vec<bool>>>, row: usize, col: usize) -> bool {
     match me {
-        Some(m) => m.get(row).and_then(|r| r.get(col)).copied().unwrap_or(false),
+        Some(m) => matrix_get_ref(m, row, col),
         None => false,
     }
+}
+
+/// Same lookup over an already-unwrapped matrix.
+fn matrix_get_ref(m: &[Vec<bool>], row: usize, col: usize) -> bool {
+    m.get(row)
+        .and_then(|r| r.get(col))
+        .copied()
+        .unwrap_or(false)
+}
+
+/// Horizontal sum of a 4 × i64 vector (exact).
+#[cfg(target_arch = "x86_64")]
+fn horiz_i64(v: core::arch::x86_64::__m256i) -> i64 {
+    let mut buf = [0i64; 4];
+    // SAFETY: stores 32 bytes into a [i64; 4] buffer.
+    unsafe { core::arch::x86_64::_mm256_storeu_si256(buf.as_mut_ptr() as *mut _, v) };
+    buf[0] + buf[1] + buf[2] + buf[3]
+}
+
+/// Horizontal wrapping sum of an 8 × i32 vector (exact mod 2³²).
+#[cfg(target_arch = "x86_64")]
+fn horiz_i32_wrapping(v: core::arch::x86_64::__m256i) -> i32 {
+    let mut buf = [0i32; 8];
+    // SAFETY: stores 32 bytes into a [i32; 8] buffer.
+    unsafe { core::arch::x86_64::_mm256_storeu_si256(buf.as_mut_ptr() as *mut _, v) };
+    buf.iter().fold(0i32, |a, &b| a.wrapping_add(b))
 }
 
 /// `matrix_set` (mincross.c:73-110) — setting out of range grows the backing
@@ -141,8 +169,375 @@ fn matrix_set(me: &mut Option<Vec<Vec<bool>>>, row: usize, col: usize) {
 // Crossing counting primitives (mincross.c:587-621, 1482-1504)
 // ---------------------------------------------------------------------------
 
-/// `in_cross(v, w)` (mincross.c:587-604) — crossings between `w`'s and `v`'s
-/// in-edges as if `v` were placed left of `w`. **i64 accumulator**.
+impl MinCross {
+    /// Rebuilds [`Snap`] from the arena — O(V+E), run only after a
+    /// structural change dropped `snap.valid`.
+    fn rebuild_snap(&mut self, fg: &Fg) {
+        let nv = fg.nodes.len();
+        let ne = fg.edges.len();
+        let s = &mut self.snap;
+        s.ord = fg.nodes.iter().map(|n| n.order).collect();
+        s.nclust = fg
+            .nodes
+            .iter()
+            .map(|n| n.clust.map_or(0, |c| c as u32 + 1))
+            .collect();
+        s.skel = fg
+            .nodes
+            .iter()
+            .map(|n| n.ranktype == RankType::Cluster && n.node_type == NodeType::Virtual)
+            .collect();
+        s.any_port = fg.nodes.iter().any(|n| n.has_port);
+        s.mval = fg.nodes.iter().map(|n| n.mval).collect();
+
+        let mut total_out = 0usize;
+        let mut total_in = 0usize;
+        for n in fg.nodes.iter() {
+            total_out += n.out.len();
+            total_in += n.in_.len();
+        }
+        s.out_edge.resize(total_out, 0);
+        s.out_eho.resize(total_out, 0);
+        s.out_xp.resize(total_out, 0);
+        s.out_hpx.resize(total_out, 0.0);
+        s.out_hpo.resize(total_out, 0);
+        s.in_edge.resize(total_in, 0);
+        s.in_eto.resize(total_in, 0);
+        s.in_xp.resize(total_in, 0);
+        s.in_tpx.resize(total_in, 0.0);
+        s.in_tpo.resize(total_in, 0);
+
+        s.out_start.clear();
+        s.out_start.push(0);
+        s.in_start.clear();
+        s.in_start.push(0);
+        let (mut io, mut ii) = (0usize, 0usize);
+        for n in 0..nv {
+            for &e in fg.nodes[n].out.iter() {
+                let d = &fg.edges[e];
+                s.out_edge[io] = e as u32;
+                s.out_eho[io] = s.ord[d.head];
+                s.out_xp[io] = d.xpenalty;
+                s.out_hpx[io] = d.head_port.p.x;
+                s.out_hpo[io] = d.head_port.order;
+                io += 1;
+            }
+            s.out_start.push(io as u32);
+            for &e in fg.nodes[n].in_.iter() {
+                let d = &fg.edges[e];
+                s.in_edge[ii] = e as u32;
+                s.in_eto[ii] = s.ord[d.tail];
+                s.in_xp[ii] = d.xpenalty;
+                s.in_tpx[ii] = d.tail_port.p.x;
+                s.in_tpo[ii] = d.tail_port.order;
+                ii += 1;
+            }
+            s.in_start.push(ii as u32);
+        }
+        // edge id → entry slot, for exchange's O(1) payload patches
+        s.out_slot.clear();
+        s.out_slot.resize(ne, u32::MAX);
+        s.in_slot.clear();
+        s.in_slot.resize(ne, u32::MAX);
+        for k in 0..total_out {
+            s.out_slot[s.out_edge[k] as usize] = k as u32;
+        }
+        for k in 0..total_in {
+            s.in_slot[s.in_edge[k] as usize] = k as u32;
+        }
+        s.valid = true;
+    }
+
+    /// Lazily (re)builds the snapshot before a hot loop reads it.
+    #[inline]
+    fn ensure_snap(&mut self, fg: &Fg) {
+        if !self.snap.valid {
+            self.rebuild_snap(fg);
+        }
+    }
+
+    /// `in_cross(v, w)` and `in_cross(w, v)` fused into one pass.
+    ///
+    /// Both directions scan the same (e1 ∈ in(v), e2 ∈ in(w)) pairs with
+    /// mirrored conditions: with `t = ord(tail(e1)) − ord(tail(e2))`,
+    /// direction (v,w) counts `t > 0` (or `t == 0 && port(e1) > port(e2)`)
+    /// and direction (w,v) counts `t < 0` (or `t == 0 && port(e2) >
+    /// port(e1)`); both add the same commutative `xp(e1)·xp(e2)` product.
+    /// One pass halves the loads, and the strict port compares can never
+    /// both fire, so the sums are exactly the two separate loops'.
+    fn in_cross_pair(&self, v: NId, w: NId) -> (i64, i64) {
+        let s = &self.snap;
+        let (v0, v1) = (s.in_start[v] as usize, s.in_start[v + 1] as usize);
+        let (w0, w1) = (s.in_start[w] as usize, s.in_start[w + 1] as usize);
+        if v0 == v1 || w0 == w1 {
+            return (0, 0);
+        }
+        if s.any_port {
+            let mut c0: i64 = 0;
+            let mut c1: i64 = 0;
+            for k in w0..w1 {
+                let cnt = s.in_xp[k];
+                let inv = s.in_eto[k];
+                let tpx2 = s.in_tpx[k];
+                for m in v0..v1 {
+                    let t = s.in_eto[m] - inv;
+                    let prod = s.in_xp[m].wrapping_mul(cnt);
+                    if t > 0 {
+                        c0 += prod as i64;
+                    } else if t < 0 {
+                        c1 += prod as i64;
+                    } else {
+                        // equal tail order ⇒ parallel edges; the strict port
+                        // compares are mutually exclusive
+                        if s.in_tpx[m] > tpx2 {
+                            c0 += prod as i64;
+                        }
+                        if tpx2 > s.in_tpx[m] {
+                            c1 += prod as i64;
+                        }
+                    }
+                }
+            }
+            (c0, c1)
+        } else {
+            #[cfg(target_arch = "x86_64")]
+            {
+                // 8-wide lanes pay off only past a few degrees; dot graphs
+                // are typically 2–6 degree, so gate on range size
+                if self.simd && v1 - v0 >= 16 {
+                    let (mut c0, mut c1) = (0i64, 0i64);
+                    // SAFETY: avx2 detected; the slices are indexed within
+                    // the CSR ranges verified above.
+                    unsafe {
+                        self.in_cross_pair_avx2(v0, v1, w0, w1, &mut c0, &mut c1);
+                    }
+                    return (c0, c1);
+                }
+            }
+            let mut c0: i64 = 0;
+            let mut c1: i64 = 0;
+            for k in w0..w1 {
+                let cnt = s.in_xp[k];
+                let inv = s.in_eto[k];
+                for m in v0..v1 {
+                    let t = s.in_eto[m] - inv;
+                    if t != 0 {
+                        let prod = s.in_xp[m].wrapping_mul(cnt);
+                        if t > 0 {
+                            c0 += prod as i64;
+                        } else {
+                            c1 += prod as i64;
+                        }
+                    }
+                }
+            }
+            (c0, c1)
+        }
+    }
+
+    /// `out_cross(v, w)` / `out_cross(w, v)` fused — see
+    /// [`Self::in_cross_pair`]; i32 accumulators with wrapping adds.
+    fn out_cross_pair(&self, v: NId, w: NId) -> (i32, i32) {
+        let s = &self.snap;
+        let (v0, v1) = (s.out_start[v] as usize, s.out_start[v + 1] as usize);
+        let (w0, w1) = (s.out_start[w] as usize, s.out_start[w + 1] as usize);
+        if v0 == v1 || w0 == w1 {
+            return (0, 0);
+        }
+        if s.any_port {
+            let mut c0: i32 = 0;
+            let mut c1: i32 = 0;
+            for k in w0..w1 {
+                let cnt = s.out_xp[k];
+                let inv = s.out_eho[k];
+                let hpx2 = s.out_hpx[k];
+                for m in v0..v1 {
+                    let t = s.out_eho[m] - inv;
+                    let prod = s.out_xp[m].wrapping_mul(cnt);
+                    if t > 0 {
+                        c0 = c0.wrapping_add(prod);
+                    } else if t < 0 {
+                        c1 = c1.wrapping_add(prod);
+                    } else {
+                        if s.out_hpx[m] > hpx2 {
+                            c0 = c0.wrapping_add(prod);
+                        }
+                        if hpx2 > s.out_hpx[m] {
+                            c1 = c1.wrapping_add(prod);
+                        }
+                    }
+                }
+            }
+            (c0, c1)
+        } else {
+            #[cfg(target_arch = "x86_64")]
+            {
+                if self.simd && v1 - v0 >= 16 {
+                    let (mut c0, mut c1) = (0i32, 0i32);
+                    // SAFETY: avx2 detected; slices indexed within CSR ranges.
+                    unsafe {
+                        self.out_cross_pair_avx2(v0, v1, w0, w1, &mut c0, &mut c1);
+                    }
+                    return (c0, c1);
+                }
+            }
+            let mut c0: i32 = 0;
+            let mut c1: i32 = 0;
+            for k in w0..w1 {
+                let cnt = s.out_xp[k];
+                let inv = s.out_eho[k];
+                for m in v0..v1 {
+                    let t = s.out_eho[m] - inv;
+                    if t != 0 {
+                        let prod = s.out_xp[m].wrapping_mul(cnt);
+                        if t > 0 {
+                            c0 = c0.wrapping_add(prod);
+                        } else {
+                            c1 = c1.wrapping_add(prod);
+                        }
+                    }
+                }
+            }
+            (c0, c1)
+        }
+    }
+
+    /// AVX2 core of [`Self::in_cross_pair`] (no-port path): 8-wide i32
+    /// compare/select/multiply, widened to exact i64 accumulation — the
+    /// lane arithmetic reproduces `wrapping_mul` + i64 sign-extension
+    /// per term.
+    ///
+    /// # Safety
+    /// Caller must have verified AVX2 support. Indices must be in range of
+    /// the snapshot arrays (guaranteed: they come from the CSR starts).
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn in_cross_pair_avx2(&self, v0: usize, v1: usize, w0: usize, w1: usize, c0: &mut i64, c1: &mut i64) {
+
+        unsafe {
+            use core::arch::x86_64::*;
+            let s = &self.snap;
+            let zero = _mm256_setzero_si256();
+            let mut acc0 = _mm256_setzero_si256(); // 4 × i64 (lanes 0..4)
+            let mut acc0h = _mm256_setzero_si256(); // 4 × i64 (lanes 4..8)
+            let mut acc1 = _mm256_setzero_si256();
+            let mut acc1h = _mm256_setzero_si256();
+            let eto = s.in_eto.as_slice();
+            let xp = s.in_xp.as_slice();
+            for k in w0..w1 {
+                let inv = _mm256_set1_epi32(s.in_eto[k]);
+                let cnt = _mm256_set1_epi32(s.in_xp[k]);
+                let mut m = v0;
+                while m + 8 <= v1 {
+                    let t = _mm256_sub_epi32(
+                        _mm256_loadu_si256(eto.as_ptr().add(m) as *const __m256i),
+                        inv,
+                    );
+                    let prod = _mm256_mullo_epi32(
+                        _mm256_loadu_si256(xp.as_ptr().add(m) as *const __m256i),
+                        cnt,
+                    );
+                    // t > 0 → c0's term; t < 0 → c1's term (t == 0 ⇒ no port
+                    // fires in the no-port path ⇒ no term)
+                    let p0 = _mm256_and_si256(prod, _mm256_cmpgt_epi32(t, zero));
+                    let p1 = _mm256_and_si256(prod, _mm256_cmpgt_epi32(zero, t));
+                    acc0 = _mm256_add_epi64(
+                        acc0,
+                        _mm256_cvtepi32_epi64(_mm256_castsi256_si128(p0)),
+                    );
+                    acc0h = _mm256_add_epi64(
+                        acc0h,
+                        _mm256_cvtepi32_epi64(_mm256_extracti128_si256(p0, 1)),
+                    );
+                    acc1 = _mm256_add_epi64(
+                        acc1,
+                        _mm256_cvtepi32_epi64(_mm256_castsi256_si128(p1)),
+                    );
+                    acc1h = _mm256_add_epi64(
+                        acc1h,
+                        _mm256_cvtepi32_epi64(_mm256_extracti128_si256(p1, 1)),
+                    );
+                    m += 8;
+                }
+                // scalar tail
+                while m < v1 {
+                    let t = s.in_eto[m] - s.in_eto[k];
+                    if t != 0 {
+                        let prod = s.in_xp[m].wrapping_mul(s.in_xp[k]);
+                        if t > 0 {
+                            *c0 += prod as i64;
+                        } else {
+                            *c1 += prod as i64;
+                        }
+                    }
+                    m += 1;
+                }
+            }
+            *c0 += horiz_i64(acc0) + horiz_i64(acc0h);
+            *c1 += horiz_i64(acc1) + horiz_i64(acc1h);
+    
+        }
+    }
+
+    /// AVX2 core of [`Self::out_cross_pair`] (no-port path): the i32
+    /// accumulators wrap per lane, and addition mod 2³² is
+    /// associative/commutative, so the horizontal reduction reproduces C's
+    /// wrapping accumulation exactly.
+    ///
+    /// # Safety
+    /// Caller must have verified AVX2 support. Indices must be in range of
+    /// the snapshot arrays.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn out_cross_pair_avx2(&self, v0: usize, v1: usize, w0: usize, w1: usize, c0: &mut i32, c1: &mut i32) {
+
+        unsafe {
+            use core::arch::x86_64::*;
+            let s = &self.snap;
+            let zero = _mm256_setzero_si256();
+            let mut acc0 = _mm256_setzero_si256();
+            let mut acc1 = _mm256_setzero_si256();
+            let eho = s.out_eho.as_slice();
+            let xp = s.out_xp.as_slice();
+            for k in w0..w1 {
+                let inv = _mm256_set1_epi32(s.out_eho[k]);
+                let cnt = _mm256_set1_epi32(s.out_xp[k]);
+                let mut m = v0;
+                while m + 8 <= v1 {
+                    let t = _mm256_sub_epi32(
+                        _mm256_loadu_si256(eho.as_ptr().add(m) as *const __m256i),
+                        inv,
+                    );
+                    let prod = _mm256_mullo_epi32(
+                        _mm256_loadu_si256(xp.as_ptr().add(m) as *const __m256i),
+                        cnt,
+                    );
+                    acc0 = _mm256_add_epi32(acc0, _mm256_and_si256(prod, _mm256_cmpgt_epi32(t, zero)));
+                    acc1 = _mm256_add_epi32(acc1, _mm256_and_si256(prod, _mm256_cmpgt_epi32(zero, t)));
+                    m += 8;
+                }
+                while m < v1 {
+                    let t = s.out_eho[m] - s.out_eho[k];
+                    if t != 0 {
+                        let prod = s.out_xp[m].wrapping_mul(s.out_xp[k]);
+                        if t > 0 {
+                            *c0 = c0.wrapping_add(prod);
+                        } else {
+                            *c1 = c1.wrapping_add(prod);
+                        }
+                    }
+                    m += 1;
+                }
+            }
+            *c0 = c0.wrapping_add(horiz_i32_wrapping(acc0));
+            *c1 = c1.wrapping_add(horiz_i32_wrapping(acc1));
+    
+        }
+    }
+}
+
+/// `in_cross(v, w)` (mincross.c:587-604) — reference form reading the arena
+/// directly (test oracle for the snapshot-based [`MinCross::in_cross`]).
+#[cfg(test)]
+#[allow(dead_code)]
 fn in_cross(fg: &Fg, v: NId, w: NId) -> i64 {
     let mut cross: i64 = 0;
     for &e2 in fg.nodes[w].in_.iter() {
@@ -160,9 +555,10 @@ fn in_cross(fg: &Fg, v: NId, w: NId) -> i64 {
     cross
 }
 
-/// `out_cross(v, w)` (mincross.c:606-621) — same shape over `ND_out` /
-/// `aghead` / `ED_head_port`. **i32 accumulator** (asymmetry with
-/// `in_cross` preserved; C wrap reproduced with `wrapping_*`).
+/// `out_cross(v, w)` (mincross.c:606-621) — reference form reading the arena
+/// directly (test oracle). **i32 accumulator** (asymmetry with `in_cross`
+/// preserved; C wrap reproduced with `wrapping_*`).
+#[cfg(test)]
 fn out_cross(fg: &Fg, v: NId, w: NId) -> i32 {
     let mut cross: i32 = 0;
     for &e2 in fg.nodes[w].out.iter() {
@@ -209,6 +605,91 @@ fn local_cross(fg: &Fg, l: &[EId], dir: i32) -> i32 {
 // Module-static state (mincross.c:159-179)
 // ---------------------------------------------------------------------------
 
+/// SoA snapshot of the fields the crossing/median hot loops read.
+///
+/// The C original reaches `ND_order` / `ED_xpenalty` through interior
+/// pointers; the port's equivalents (`fg.nodes[x].order`,
+/// `fg.edges[e].xpenalty`, …) sit inside structs several hundred bytes
+/// wide, so every read misses the cache once a graph outgrows L2 — that
+/// dominated profiles of large graphs. The snapshot packs exactly those
+/// fields into contiguous arrays, with per-adjacency-entry payloads so the
+/// inner crossing loops read *pure* contiguous slices and can auto-
+/// vectorize. Sync contract:
+///
+/// * [`MinCross::exchange`] — the only order mutation inside the hot
+///   loops — patches the two swapped nodes' incident payloads in O(deg);
+/// * any structural change (rank building, flat-edge rewiring, cluster
+///   expansion, component merge, `ordering` edges) drops `valid`, and the
+///   next hot-loop entry ([`MinCross::ensure_snap`]) rebuilds in O(V+E).
+struct Snap {
+    /// `ND_order` per node.
+    ord: Vec<i32>,
+    /// `ND_clust` per node as `clust + 1` (0 = none) — `left2right`'s
+    /// cluster guard.
+    nclust: Vec<u32>,
+    /// `ND_ranktype == CLUSTER && ND_node_type == VIRTUAL` per node —
+    /// `left2right`'s skeleton exception.
+    skel: Vec<bool>,
+    /// CSR over `ND_out` / `ND_in`, preserving each elist's order.
+    out_start: Vec<u32>,
+    in_start: Vec<u32>,
+    out_edge: Vec<u32>,
+    in_edge: Vec<u32>,
+    /// Per-**out**-entry payloads (entry = a tail's out-edge, so the data
+    /// is head-side): head order, xpenalty, head port x, head port order.
+    out_eho: Vec<i32>,
+    out_xp: Vec<i32>,
+    out_hpx: Vec<f64>,
+    out_hpo: Vec<u8>,
+    /// Per-**in**-entry payloads (tail-side data): tail order, xpenalty,
+    /// tail port x, tail port order.
+    in_eto: Vec<i32>,
+    in_xp: Vec<i32>,
+    in_tpx: Vec<f64>,
+    in_tpo: Vec<u8>,
+    /// Edge id → its entry index in its tail's out-CSR / head's in-CSR
+    /// (`u32::MAX` when the edge is in no list) — [`MinCross::exchange`]'s
+    /// O(1) payload patch.
+    out_slot: Vec<u32>,
+    in_slot: Vec<u32>,
+    /// `ND_mval` per node — written by `medians`, read by `reorder`'s scan
+    /// (which probes every node's mval several times per rank pass).
+    mval: Vec<f64>,
+    /// Any node carries a resolved port (`ND_has_port`): when false, every
+    /// port x is 0.0 and the port tie-break in the crossing loops never
+    /// fires, so the loops run without the f64 compare.
+    any_port: bool,
+    /// Whether the arrays mirror the arena's current state.
+    valid: bool,
+}
+
+impl Default for Snap {
+    fn default() -> Self {
+        Snap {
+            ord: Vec::new(),
+            nclust: Vec::new(),
+            skel: Vec::new(),
+            out_start: Vec::new(),
+            in_start: Vec::new(),
+            out_edge: Vec::new(),
+            in_edge: Vec::new(),
+            out_eho: Vec::new(),
+            out_xp: Vec::new(),
+            out_hpx: Vec::new(),
+            out_hpo: Vec::new(),
+            in_eto: Vec::new(),
+            in_xp: Vec::new(),
+            in_tpx: Vec::new(),
+            in_tpo: Vec::new(),
+            out_slot: Vec::new(),
+            in_slot: Vec::new(),
+            mval: Vec::new(),
+            any_port: false,
+            valid: false,
+        }
+    }
+}
+
 /// The module-static state of mincross.c (L159-179) plus the rank-window
 /// bookkeeping the C encodes in raw interior pointers (see the module docs).
 struct MinCross {
@@ -233,6 +714,32 @@ struct MinCross {
     /// Indexed by node id; only live between `save_best` and
     /// `restore_best`/`cleanup2`.
     saved_order: Vec<i32>,
+    /// The SoA mirror the hot loops read (see [`Snap`]).
+    snap: Snap,
+    /// Per-rank adjacent-pair crossing cache (see [`transpose_step`]).
+    xcache: Vec<XCache>,
+    /// AVX2 available (probed once at construction).
+    simd: bool,
+}
+
+/// One cached adjacent-pair evaluation: the in/out crossing sums for the
+/// pair as-is (`c0*`) and swapped (`c1*`).
+#[derive(Default, Clone, Copy)]
+struct XEntry {
+    c0i: i64,
+    c1i: i64,
+    c0o: i32,
+    c1o: i32,
+    ok: bool,
+}
+
+/// Per-rank cache: `entries[i]` covers the window positions `(i, i+1)`.
+/// Valid only while `n` matches the rank's size and no swap touched the
+/// pair's relevant orders.
+#[derive(Default, Clone)]
+struct XCache {
+    n: usize,
+    entries: Vec<XEntry>,
 }
 
 impl MinCross {
@@ -247,7 +754,17 @@ impl MinCross {
             win: Vec::new(),
             candidate: Vec::new(),
             saved_order: Vec::new(),
+            snap: Snap::default(),
+            xcache: Vec::new(),
+            simd: cfg!(target_arch = "x86_64") && std::arch::is_x86_feature_detected!("avx2"),
         }
+    }
+
+    /// Drops the SoA snapshot AND the pair cache — everything that depends
+    /// on arena orders/edge state.
+    fn invalidate_snap(&mut self) {
+        self.snap.valid = false;
+        self.xcache = Vec::new();
     }
 
     /// `mincross_options` (mincross.c:1750-1763) — defaults `MinQuit = 8`,
@@ -296,7 +813,10 @@ pub fn dot_mincross(fg: &mut Fg, g: GId) -> Result<(), i32> {
     let mut t0 = std::time::Instant::now();
     let mut lap = |name: &str| {
         if timing {
-            eprintln!("[timing]   mincross::{name}: {:.3}s", t0.elapsed().as_secs_f64());
+            eprintln!(
+                "[timing]   mincross::{name}: {:.3}s",
+                t0.elapsed().as_secs_f64()
+            );
             t0 = std::time::Instant::now();
         }
     };
@@ -345,6 +865,7 @@ pub fn dot_mincross(fg: &mut Fg, g: GId) -> Result<(), i32> {
     };
     if !fg.graphs[g].clust.is_empty() && remincross {
         position::mark_lowclusters(fg, g);
+        mc.invalidate_snap(); // mark_lowclusters rewrote every ND_clust
         mc.remincross = true;
         nc = mc.mincross(fg, g, 2);
         if nc < 0 {
@@ -397,6 +918,13 @@ impl MinCross {
         for &n in fg.graphs[g].nodes_order.iter() {
             cn[fg.nodes[n].rank as usize] += 1;
             for &e in fg.input_out[n].iter() {
+                // C iterates `agfstout(g, n)` — the *subgraph's* edge
+                // membership. For a cluster that excludes edges leaving the
+                // cluster (their span would exceed the cluster's own rank
+                // allocation); for the root it owns every edge.
+                if !fg.graphs[g].owns_input_edge(fg, e) {
+                    continue;
+                }
                 let tr = fg.nodes[fg.edges[e].tail].rank;
                 let hr = fg.nodes[fg.edges[e].head].rank;
                 let (low, high) = if tr > hr { (hr, tr) } else { (tr, hr) };
@@ -435,6 +963,9 @@ impl MinCross {
     /// component's nodes.
     fn init_mccomp(&mut self, fg: &mut Fg, g: GId, c: usize) {
         fg.graphs[g].nlist = Some(fg.graphs[g].comp[c]);
+        if c > 0 {
+            self.xcache = Vec::new(); // rank row sizes shift with the window
+        }
         if c > 0 {
             for r in fg.graphs[g].minrank..=fg.graphs[g].maxrank {
                 // GD_rank(g)[r].v += GD_rank(g)[r].n; GD_rank(g)[r].n = 0;
@@ -481,7 +1012,14 @@ impl MinCross {
     /// `enqueue_neighbors` (mincross.c:1275-1295) — pass 0 ⇒ enqueue the
     /// heads of `n0`'s out-edges in list order; otherwise the tails of its
     /// in-edges. Marks are set at push time (BFS dedup).
-    fn enqueue_neighbors(&self, fg: &mut Fg, q: &mut VecDeque<NId>, n0: NId, pass: i32, set: usize) {
+    fn enqueue_neighbors(
+        &self,
+        fg: &mut Fg,
+        q: &mut VecDeque<NId>,
+        n0: NId,
+        pass: i32,
+        set: usize,
+    ) {
         if pass == 0 {
             for i in 0..fg.nodes[n0].out.len() {
                 let e = fg.nodes[n0].out[i];
@@ -511,6 +1049,7 @@ impl MinCross {
     /// Called twice for the root (pass 0 seeds from in-degree-0 nodes, pass 1
     /// from out-degree-0 nodes) and once per cluster (pass 0).
     fn build_ranks(&mut self, fg: &mut Fg, g: GId, pass: i32) -> i32 {
+        self.invalidate_snap(); // installs + flip rewrite ND_order
         let (unset, set) = fresh_marks(fg);
         // L1204-1205: MARK(n) = false over the GD_nlist chain
         let mut next = fg.graphs[g].nlist;
@@ -790,6 +1329,7 @@ impl MinCross {
     /// and re-sort each rank row by it (`nodeposcmpf`; orders are a unique
     /// permutation within a row, so a stable sort matches `qsort`).
     fn restore_best(&mut self, fg: &mut Fg, g: GId) {
+        self.invalidate_snap(); // writes ND_order, then re-sorts rows
         for r in fg.graphs[g].minrank..=fg.graphs[g].maxrank {
             let (win, n) = (self.win[ri(r)], fg.graphs[g].rank[ri(r)].n);
             for i in 0..n {
@@ -847,11 +1387,23 @@ impl MinCross {
         }
 
         let mut r = first;
+        let t_dbg = std::env::var_os("GD_TIMING").is_some();
+        let (mut tm, mut tr) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
         while r != last + dir {
             let other = r - dir;
+            let s0 = std::time::Instant::now();
             let hasfixed = self.medians(fg, g, r, other); // mval of rank r from rank `other`
+            let s1 = std::time::Instant::now();
             self.reorder(fg, g, r, reverse, hasfixed);
+            let s2 = std::time::Instant::now();
+            if t_dbg {
+                tm += s1 - s0;
+                tr += s2 - s1;
+            }
             r += dir;
+        }
+        if t_dbg {
+            eprintln!("[timing]       step: medians {:.3}s reorder {:.3}s", tm.as_secs_f64(), tr.as_secs_f64());
         }
         self.transpose(fg, g, !reverse); // L1479: the OPPOSITE of reorder's `reverse`
     }
@@ -864,6 +1416,10 @@ impl MinCross {
     /// row. C writes through `GD_rank(Root)[r].v` — the *window* — indexing
     /// with the (window-relative) `ND_order` values; the port indexes the
     /// base row at `win[r] + order`. No bound/type checks, as in C.
+    ///
+    /// The snapshot's `ord` and the per-entry order payloads are patched
+    /// here in O(deg(v) + deg(w)) — the only order mutation inside the hot
+    /// loops (a stale snapshot is rebuilt wholesale instead).
     fn exchange(&mut self, fg: &mut Fg, v: NId, w: NId) {
         let r = fg.nodes[v].rank;
         let vi = fg.nodes[v].order;
@@ -876,6 +1432,72 @@ impl MinCross {
         }
         fg.nodes[v].order = wi;
         fg.nodes[w].order = vi;
+        if self.snap.valid {
+            let s = &mut self.snap;
+            s.ord[v] = wi;
+            s.ord[w] = vi;
+            // v took order wi: every edge with v on that side follows.
+            for &e in fg.nodes[v].out.iter() {
+                let slot = s.in_slot[e];
+                if slot != u32::MAX {
+                    s.in_eto[slot as usize] = wi;
+                }
+            }
+            for &e in fg.nodes[v].in_.iter() {
+                let slot = s.out_slot[e];
+                if slot != u32::MAX {
+                    s.out_eho[slot as usize] = wi;
+                }
+            }
+            // w took order vi
+            for &e in fg.nodes[w].out.iter() {
+                let slot = s.in_slot[e];
+                if slot != u32::MAX {
+                    s.in_eto[slot as usize] = vi;
+                }
+            }
+            for &e in fg.nodes[w].in_.iter() {
+                let slot = s.out_slot[e];
+                if slot != u32::MAX {
+                    s.out_eho[slot as usize] = vi;
+                }
+            }
+        }
+        // Pair-cache invalidation: the swapped pair's own entry mirrors
+        // (crossings of the reversed arrangement are the stored ones — the
+        // sums only read the *other* ranks' orders); its neighbors' pairs
+        // changed membership. Neighbor ranks' caches die wholesale.
+        let (a, b) = (vi.min(wi) as usize, vi.max(wi) as usize);
+        if let Some(xc) = self.xcache.get_mut(ri(r)) {
+            if xc.n > 0 && a < xc.n {
+                if b == a + 1 {
+                    let e = &mut xc.entries[a];
+                    if e.ok {
+                        std::mem::swap(&mut e.c0i, &mut e.c1i);
+                        std::mem::swap(&mut e.c0o, &mut e.c1o);
+                    }
+                } else {
+                    xc.entries[a].ok = false;
+                }
+                if a > 0 {
+                    xc.entries[a - 1].ok = false;
+                }
+                if b < xc.n {
+                    xc.entries[b].ok = false;
+                }
+                if b - 1 > a && b - 1 < xc.n {
+                    xc.entries[b - 1].ok = false;
+                }
+            }
+        }
+        for rr in [r - 1, r + 1] {
+            if rr >= 0 {
+                if let Some(xc) = self.xcache.get_mut(ri(rr)) {
+                    xc.n = 0;
+                    xc.entries.clear();
+                }
+            }
+        }
         // C aliases the clusters' rank slices into the root's row; this port
         // keeps copies, so the swap has to be mirrored.
         cluster::refresh_expanded_clusters(fg, r);
@@ -896,23 +1518,53 @@ impl MinCross {
             return rv;
         }
         let win = self.win[ri(r)];
+        self.ensure_snap(fg); // build_ranks' transpose runs on fresh rows
+        // loop-invariant lookups, hoisted out of the pair scan
+        let has_matrix = fg.graphs[g].rank[ri(r)].flat.is_some();
+        let flip = fg.graphs[g].rankdir.flip();
+        let next_row_nonempty = fg.graphs[g].rank[ri(r + 1)].n > 0;
+
+        // Adjacent-pair crossing cache: a rescan recomputes only the pairs
+        // whose relevant orders changed (this rank's swaps touch positions
+        // i-1..i+1; a swap in r±1 invalidates the whole row's cache — see
+        // `exchange`). Convergence tail scans (the dominant cost) then read
+        // every value from the cache and swap nothing.
+        if self.xcache.len() <= ri(r) {
+            self.xcache.resize(ri(r) + 1, XCache::default());
+        }
+        if self.xcache[ri(r)].n != n - 1 {
+            let x = &mut self.xcache[ri(r)];
+            x.n = n - 1;
+            x.entries.clear();
+            x.entries.resize_with(n - 1, Default::default);
+        }
+
         for i in 0..(n - 1) {
             let v = fg.graphs[g].rank[ri(r)].v[win + i];
             let w = fg.graphs[g].rank[ri(r)].v[win + i + 1];
             debug_assert!(fg.nodes[v].order < fg.nodes[w].order);
-            if self.left2right(fg, g, v, w) {
+            if self.left2right(fg, g, v, w, has_matrix, flip) {
                 continue; // frozen pair
             }
-            let mut c0: i64 = 0; // crossings as-is
-            let mut c1: i64 = 0; // crossings swapped
-            if r > 0 {
-                c0 += in_cross(fg, v, w);
-                c1 += in_cross(fg, w, v);
-            }
-            if fg.graphs[g].rank[ri(r + 1)].n > 0 {
-                c0 += out_cross(fg, v, w) as i64;
-                c1 += out_cross(fg, w, v) as i64;
-            }
+            let (c0, c1) = if self.xcache[ri(r)].entries[i].ok {
+                let e = &self.xcache[ri(r)].entries[i];
+                (e.c0i + e.c0o as i64, e.c1i + e.c1o as i64)
+            } else {
+                let (mut c0i, mut c1i) = (0i64, 0i64);
+                let (mut c0o, mut c1o) = (0i32, 0i32);
+                if r > 0 {
+                    let (a, b) = self.in_cross_pair(v, w);
+                    c0i = a;
+                    c1i = b;
+                }
+                if next_row_nonempty {
+                    let (a, b) = self.out_cross_pair(v, w);
+                    c0o = a;
+                    c1o = b;
+                }
+                self.xcache[ri(r)].entries[i] = XEntry { c0i, c1i, c0o, c1o, ok: true };
+                (c0i + c0o as i64, c1i + c1o as i64)
+            };
             if c1 < c0 || (c0 > 0 && reverse && c1 == c0) {
                 self.exchange(fg, v, w);
                 rv += c0 - c1;
@@ -936,7 +1588,10 @@ impl MinCross {
     /// pass yields `delta < 1`. A pass of pure tie-swaps (reverse mode)
     /// yields `delta == 0` and terminates.
     fn transpose(&mut self, fg: &mut Fg, g: GId, reverse: bool) {
-        let (ti, t0) = (std::env::var_os("GD_TIMING").is_some(), std::time::Instant::now());
+        let (ti, t0) = (
+            std::env::var_os("GD_TIMING").is_some(),
+            std::time::Instant::now(),
+        );
         let mut n_sweeps: usize = 0;
         let mut n_scan: usize = 0;
         for r in fg.graphs[g].minrank..=fg.graphs[g].maxrank {
@@ -966,51 +1621,47 @@ impl MinCross {
     /// `left2right` (mincross.c:563-585) — may `v`, `w` (at orders `v < w`)
     /// not be exchanged? Callers assert `ND_order(v) < ND_order(w)`; with
     /// `GD_flip` the flat-matrix lookup is mirrored (L581-584).
-    fn left2right(&self, fg: &Fg, g: GId, v: NId, w: NId) -> bool {
+    ///
+    /// `has_matrix`/`flip` are loop-invariant per rank scan and hoisted by
+    /// the callers; the node flags come from the SoA snapshot.
+    fn left2right(&self, fg: &Fg, g: GId, v: NId, w: NId, has_matrix: bool, flip: bool) -> bool {
         // CLUSTER indicates orig nodes of clusters, and vnodes of skeletons
         if !self.remincross {
-            if fg.nodes[v].clust != fg.nodes[w].clust
-                && fg.nodes[v].clust.is_some()
-                && fg.nodes[w].clust.is_some()
-            {
+            let (cv, cw) = (self.snap.nclust[v], self.snap.nclust[w]);
+            if cv != cw && cv != 0 && cw != 0 {
                 // the following allows cluster skeletons to be swapped
-                if fg.nodes[v].ranktype == RankType::Cluster
-                    && fg.nodes[v].node_type == NodeType::Virtual
-                {
+                if self.snap.skel[v] {
                     return false;
                 }
-                if fg.nodes[w].ranktype == RankType::Cluster
-                    && fg.nodes[w].node_type == NodeType::Virtual
-                {
+                if self.snap.skel[w] {
                     return false;
                 }
                 return true; // different real clusters: never swap
             }
         } else {
             // remincross pass: never interleave clusters after expansion
-            if fg.nodes[v].clust != fg.nodes[w].clust {
+            if self.snap.nclust[v] != self.snap.nclust[w] {
                 return true;
             }
         }
-        let r = fg.nodes[v].rank;
-        let m = &fg.graphs[g].rank[ri(r)].flat;
-        if m.is_none() {
+        if !has_matrix {
             return false;
         }
-        let (v, w) = if fg.graphs[g].rankdir.flip() { (w, v) } else { (v, w) };
-        matrix_get(m, fg.nodes[v].low as usize, fg.nodes[w].low as usize)
+        let r = fg.nodes[v].rank;
+        let Some(m) = fg.graphs[g].rank[ri(r)].flat.as_ref() else {
+            return false;
+        };
+        let (v, w) = if flip { (w, v) } else { (v, w) };
+        matrix_get_ref(m, fg.nodes[v].low as usize, fg.nodes[w].low as usize)
     }
 
     // -----------------------------------------------------------------------
     // Medians and reorder (mincross.c:1404-1453, 1583-1670)
     // -----------------------------------------------------------------------
 
-    /// `VAL(node, port)` (mincross.c:1612) — `MC_SCALE * ND_order(node) +
-    /// port.order`, C `int` arithmetic.
-    #[inline]
-    fn val(fg: &Fg, node: NId, port_order: u8) -> i32 {
-        (MC_SCALE * fg.nodes[node].order as i64 + port_order as i64) as i32
-    }
+    /// `VAL(node, port)` (mincross.c:1612) inlines as
+    /// `MC_SCALE * ND_order(node) + port.order` (C `int` arithmetic); the
+    /// medians loop reads both operands straight from the snapshot.
 
     /// `medians` (mincross.c:1614-1670) — compute `ND_mval` for every node of
     /// rank `r0` from rank `r1` (the side we came from); returns `hasfixed`.
@@ -1019,30 +1670,46 @@ impl MinCross {
     /// spans use plain C int-division averages; otherwise
     /// `list[lm]*rspan + list[rm]*lspan` over `lspan + rspan` (real-valued).
     ///
+    /// Edge walks go through the SoA snapshot (elist order preserved).
     fn medians(&mut self, fg: &mut Fg, g: GId, r0: i32, r1: i32) -> bool {
+        self.ensure_snap(fg);
         let mut hasfixed = false;
         let mut list: Vec<i32> = Vec::new(); // TI_list scratch (growable stand-in)
         let (win, n) = (self.win[ri(r0)], fg.graphs[g].rank[ri(r0)].n);
         for i in 0..n {
             let v = fg.graphs[g].rank[ri(r0)].v[win + i];
             list.clear();
+            let (s0, s1) = (
+                self.snap.out_start[v] as usize,
+                self.snap.out_start[v + 1] as usize,
+            );
+            let (t0, t1) = (
+                self.snap.in_start[v] as usize,
+                self.snap.in_start[v + 1] as usize,
+            );
             if r1 > r0 {
                 // r1 below r0 ⇒ downward medians over out-edges
-                for &e in fg.nodes[v].out.iter() {
-                    if fg.edges[e].xpenalty > 0 {
-                        list.push(Self::val(fg, fg.edges[e].head, fg.edges[e].head_port.order));
+                for k in s0..s1 {
+                    if self.snap.out_xp[k] > 0 {
+                        list.push(
+                            (MC_SCALE * self.snap.out_eho[k] as i64
+                                + self.snap.out_hpo[k] as i64) as i32,
+                        );
                     }
                 }
             } else {
                 // r1 above (or same) ⇒ upward medians over in-edges
-                for &e in fg.nodes[v].in_.iter() {
-                    if fg.edges[e].xpenalty > 0 {
-                        list.push(Self::val(fg, fg.edges[e].tail, fg.edges[e].tail_port.order));
+                for k in t0..t1 {
+                    if self.snap.in_xp[k] > 0 {
+                        list.push(
+                            (MC_SCALE * self.snap.in_eto[k] as i64
+                                + self.snap.in_tpo[k] as i64) as i32,
+                        );
                     }
                 }
             }
             let j = list.len();
-            fg.nodes[v].mval = match j {
+            let mval = match j {
                 0 => -1.0, // "fixed" — never comparable in reorder
                 1 => list[0] as f64,
                 // C int division; operands ≥ 0 so truncation == floor
@@ -1060,13 +1727,14 @@ impl MinCross {
                         if lspan == rspan {
                             ((list[lm] + list[rm]) / 2) as f64
                         } else {
-                            let w =
-                                list[lm] as f64 * rspan as f64 + list[rm] as f64 * lspan as f64;
+                            let w = list[lm] as f64 * rspan as f64 + list[rm] as f64 * lspan as f64;
                             w / (lspan + rspan) as f64
                         }
                     }
                 }
             };
+            fg.nodes[v].mval = mval;
+            self.snap.mval[v] = mval;
         }
         // second pass: isolated nodes get flat_mval (L1664-1668) — fast-graph
         // degrees, NOT flat lists.
@@ -1087,7 +1755,8 @@ impl MinCross {
     /// *largest-order* in-tail; out-edge branch uses `> 0` and `-1` on the
     /// *smallest-order* out-head; one-step propagation only. Returns true if
     /// `mval` stays -1 ("fixed" for reorder).
-    fn flat_mval(&self, fg: &mut Fg, n: NId) -> bool {
+    fn flat_mval(&mut self, fg: &mut Fg, n: NId) -> bool {
+        let s = &self.snap;
         if !fg.nodes[n].flat_in.is_empty() {
             let mut nn = fg.edges[fg.nodes[n].flat_in[0]].tail;
             for i in 1..fg.nodes[n].flat_in.len() {
@@ -1097,8 +1766,10 @@ impl MinCross {
                     nn = t;
                 }
             }
-            if fg.nodes[nn].mval >= 0.0 {
-                fg.nodes[n].mval = fg.nodes[nn].mval + 1.0;
+            if s.mval[nn] >= 0.0 {
+                let m = s.mval[nn] + 1.0;
+                fg.nodes[n].mval = m;
+                self.snap.mval[n] = m;
                 return false;
             }
         } else if !fg.nodes[n].flat_out.is_empty() {
@@ -1110,8 +1781,10 @@ impl MinCross {
                     nn = h;
                 }
             }
-            if fg.nodes[nn].mval > 0.0 {
-                fg.nodes[n].mval = fg.nodes[nn].mval - 1.0;
+            if s.mval[nn] > 0.0 {
+                let m = s.mval[nn] - 1.0;
+                fg.nodes[n].mval = m;
+                self.snap.mval[n] = m;
                 return false;
             }
         }
@@ -1125,9 +1798,12 @@ impl MinCross {
     /// can be skipped over). The window shrinks from the right each outer
     /// round only when `!hasfixed && !reverse`.
     fn reorder(&mut self, fg: &mut Fg, g: GId, r: i32, reverse: bool, hasfixed: bool) {
+        self.ensure_snap(fg); // left2right reads the snapshot's cluster flags
         let win = self.win[ri(r)];
         let mut changed = 0i32;
         let mut ep = fg.graphs[g].rank[ri(r)].n as i32; // exclusive window end (shrinks)
+        let has_matrix = fg.graphs[g].rank[ri(r)].flat.is_some();
+        let flip = fg.graphs[g].rankdir.flip();
 
         let mut nelt = ep - 1;
         while nelt >= 0 {
@@ -1136,8 +1812,7 @@ impl MinCross {
             let mut rp: i32;
             while lp < ep {
                 // find leftmost node that can be compared
-                while lp < ep
-                    && fg.nodes[fg.graphs[g].rank[ri(r)].v[win + lp as usize]].mval < 0.0
+                while lp < ep && self.snap.mval[fg.graphs[g].rank[ri(r)].v[win + lp as usize]] < 0.0
                 {
                     lp += 1;
                 }
@@ -1154,11 +1829,18 @@ impl MinCross {
                         rp += 1;
                         continue; // skip interior cluster nodes (### marker)
                     }
-                    if self.left2right(fg, g, fg.graphs[g].rank[ri(r)].v[win + lp as usize], rn) {
+                    if self.left2right(
+                        fg,
+                        g,
+                        fg.graphs[g].rank[ri(r)].v[win + lp as usize],
+                        rn,
+                        has_matrix,
+                        flip,
+                    ) {
                         muststay = true;
                         break;
                     }
-                    if fg.nodes[rn].mval >= 0.0 {
+                    if self.snap.mval[rn] >= 0.0 {
                         break; // found comparable
                     }
                     if fg.nodes[rn].clust.is_some() {
@@ -1172,8 +1854,8 @@ impl MinCross {
                 if !muststay {
                     let ln = fg.graphs[g].rank[ri(r)].v[win + lp as usize];
                     let rn = fg.graphs[g].rank[ri(r)].v[win + rp as usize];
-                    let p1 = fg.nodes[ln].mval;
-                    let p2 = fg.nodes[rn].mval;
+                    let p1 = self.snap.mval[ln];
+                    let p2 = self.snap.mval[rn];
                     // p1 > p2 always swaps; p1 == p2 swaps iff reverse
                     if p1 > p2 || (p1 >= p2 && reverse) {
                         // exchange positions lp and rp (not adjacent-swap semantics!)
@@ -1316,9 +1998,7 @@ impl MinCross {
         while i < fg.nodes[v].flat_out.len() {
             let e = fg.nodes[v].flat_out[i];
             let (t, h) = (fg.edges[e].tail, fg.edges[e].head);
-            if hascl
-                && !(Self::agcontains_node(fg, g, t) && Self::agcontains_node(fg, g, h))
-            {
+            if hascl && !(Self::agcontains_node(fg, g, t) && Self::agcontains_node(fg, g, h)) {
                 i += 1;
                 continue; // edge of another cluster: ignore entirely (kept in lists)
             }
@@ -1356,6 +2036,7 @@ impl MinCross {
     /// matrix once (at the first node with flat out-edges), then run
     /// `flat_search` from each unmarked node, left→right.
     fn flat_breakcycles(&mut self, fg: &mut Fg, g: GId) {
+        self.invalidate_snap(); // flat_rev merges fold xpenalty
         let (unset, set) = fresh_marks(fg);
         for r in fg.graphs[g].minrank..=fg.graphs[g].maxrank {
             let mut flat = false;
@@ -1383,15 +2064,7 @@ impl MinCross {
 
     /// `postorder` (mincross.c:1310-1325) — construct nodes reachable from
     /// `v` in post-order (the same as a topological sort in reverse order).
-    fn postorder(
-        &mut self,
-        fg: &mut Fg,
-        g: GId,
-        v: NId,
-        list: &mut Vec<NId>,
-        r: i32,
-        set: usize,
-    ) {
+    fn postorder(&mut self, fg: &mut Fg, g: GId, v: NId, list: &mut Vec<NId>, r: i32, set: usize) {
         fg.nodes[v].mark = set;
         for i in 0..fg.nodes[v].flat_out.len() {
             let e = fg.nodes[v].flat_out[i];
@@ -1416,6 +2089,7 @@ impl MinCross {
     /// `flat_rev`, and (b) invalidating every visited rank's crossing cache
     /// (L1399 runs unconditionally per non-empty rank).
     fn flat_reorder(&mut self, fg: &mut Fg, g: GId) {
+        self.invalidate_snap(); // rewrites orders + flat_rev
         if !fg.graphs[g].has_flat_edges {
             return; // L1333-1334
         }
@@ -1483,11 +2157,7 @@ impl MinCross {
                         let e = fg.nodes[v].flat_out[j];
                         let h_ord = fg.nodes[fg.edges[e].head].order;
                         let t_ord = fg.nodes[fg.edges[e].tail].order;
-                        let leftward = if !flip {
-                            h_ord < t_ord
-                        } else {
-                            h_ord > t_ord
-                        };
+                        let leftward = if !flip { h_ord < t_ord } else { h_ord > t_ord };
                         if leftward {
                             debug_assert!(!self.constraining_flat_edge(fg, g, e));
                             delete_flat_edge(fg, e);
@@ -1575,13 +2245,55 @@ impl MinCross {
     /// `build_ranks` (L1259), `transpose_step` (L660-669), `reorder`
     /// (L1449-1451 — only r and r-1), `flat_reorder` (L1399).
     fn ncross(&mut self, fg: &mut Fg) -> i64 {
+        self.ensure_snap(fg);
         let g = self.root;
-        let mut count: i64 = 0;
+        // the invalidated ranks (cache misses) are the work; each rank's
+        // rcross reads only its own two rows, so the re-computations are
+        // independent and the integer total is order-independent
+        let mut invalid: Vec<i32> = Vec::new();
+        let mut work = 0usize;
         for r in fg.graphs[g].minrank..fg.graphs[g].maxrank {
-            let valid = fg.graphs[g].rank[ri(r)].valid;
-            if valid {
+            if !fg.graphs[g].rank[ri(r)].valid {
+                invalid.push(r);
+                work += fg.graphs[g].rank[ri(r)].n;
+            }
+        }
+        let mut count: i64 = 0;
+        // still-valid ranks contribute their cached totals (integer sums are
+        // order-independent, so adding them up front is exact)
+        for r in fg.graphs[g].minrank..fg.graphs[g].maxrank {
+            if fg.graphs[g].rank[ri(r)].valid {
                 count += fg.graphs[g].rank[ri(r)].cache_nc.unwrap_or(0) as i64;
-            } else {
+            }
+        }
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(8);
+        if invalid.len() >= 4 && work >= 8192 && threads > 1 {
+            // parallel: chunk the invalidated ranks across threads; rcross(r)
+            // only reads rank r's own two rows, so the computations are
+            // independent. Results come back in rank order and the caches are
+            // filled sequentially — identical observable state to the scan.
+            let chunk = invalid.len().div_ceil(threads);
+            let (me, fgr) = (&*self, &*fg);
+            let results: Vec<Vec<(i32, i64)>> = std::thread::scope(|scope| {
+                let handles: Vec<_> = invalid
+                    .chunks(chunk)
+                    .map(|ch| scope.spawn(move || ch.iter().map(|&r| (r, me.rcross(fgr, r))).collect()))
+                    .collect();
+                handles.into_iter().map(|h| h.join().expect("rcross thread")).collect()
+            });
+            for part in results {
+                for (r, nc) in part {
+                    count += nc;
+                    let rank = &mut fg.graphs[g].rank[ri(r)];
+                    rank.cache_nc = Some(nc as usize);
+                    rank.valid = true;
+                }
+            }
+        } else {
+            for r in invalid {
                 let nc = self.rcross(fg, r);
                 count += nc;
                 let rank = &mut fg.graphs[g].rank[ri(r)];
@@ -1630,6 +2342,7 @@ impl MinCross {
     /// trailing `NO_NODE` slack slots are truncated away so `Rank::v` is the
     /// final row; C keeps them but only ever reads `0 .. n`.
     fn merge2(&mut self, fg: &mut Fg, g: GId) {
+        self.invalidate_snap(); // global order renumbering
         // merge the components and rank limits (L811-812)
         self.merge_components(fg, g);
 
@@ -1662,6 +2375,7 @@ impl MinCross {
     /// stable); an unlinked `FLATORDER` edge simply remains an unreferenced
     /// slot — the same observable state as C's `free`.
     fn cleanup2(&mut self, fg: &mut Fg, g: GId, _nc: i64, has_vlists: bool) {
+        self.invalidate_snap(); // final renumbering
         // C L837-844: free TI_list / TE_list — dropped with self.
         let _ = _nc; // C L866-868 prints a Verbose summary here.
 
@@ -1807,9 +2521,9 @@ impl MinCross {
     /// dominates the node attributes; clusters are processed by separate
     /// calls (`mincross_clust`).
     fn ordered_edges(&mut self, fg: &mut Fg, g: GId) {
+        self.invalidate_snap(); // FLATORDER edges extend the arena
         let g_ordering = Self::graph_ordering_attr(fg, g);
-        let n_ordering = fg
-            .graphs[g]
+        let n_ordering = fg.graphs[g]
             .nodes_order
             .first()
             .is_some_and(|&n| Self::node_ordering_attr(fg, n).is_some());
@@ -1852,6 +2566,7 @@ impl MinCross {
     /// (`merge_ranks`), then rebuild its inter-cluster edges (`interclexp`)
     /// and drop the skeleton (`remove_rankleaders`).
     fn expand_cluster(&mut self, fg: &mut Fg, subg: GId) -> i32 {
+        self.invalidate_snap(); // class2/interclexp rewire in_/out_
         class2(fg, subg);
         fg.graphs[subg].comp = fg.graphs[subg].nlist.map(|n| vec![n]).unwrap_or_default();
         self.allocate_ranks(fg, subg);
@@ -1957,7 +2672,10 @@ impl MinCross {
             }
             None
         } else {
-            row.v.get((o + 1) as usize).copied().filter(|&n| n != NO_NODE)
+            row.v
+                .get((o + 1) as usize)
+                .copied()
+                .filter(|&n| n != NO_NODE)
         }
     }
 
@@ -2007,7 +2725,7 @@ impl MinCross {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dotgen::{build, Measured};
+    use crate::dotgen::{Measured, build};
     use crate::graph::parser::parse;
 
     /// dot_rank + dot_mincross over a parsed source graph.
@@ -2046,6 +2764,87 @@ mod tests {
             }
         }
         cross
+    }
+
+    /// The fused AVX2 kernels must agree bit-for-bit with the scalar
+    /// reference over randomized xpenalty/order tables.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn avx2_pair_kernels_match_scalar() {
+        if !std::is_x86_feature_detected!("avx2") {
+            return; // scalar paths are exercised by every other test
+        }
+        let mut mc = MinCross::new(0);
+        // deterministic pseudo-random tables
+        let mut seed = 0x2545F4914F6CDD1Du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let ne = 257usize;
+        mc.snap.in_eto = (0..ne).map(|_| (next() % 40) as i32).collect();
+        mc.snap.in_xp = (0..ne).map(|i| if i % 17 == 0 { ((next() % 1000) as i32).wrapping_neg() } else { (next() % 5000) as i32 }).collect();
+        mc.snap.out_eho = (0..ne).map(|_| (next() % 40) as i32).collect();
+        mc.snap.out_xp = mc.snap.in_xp.clone();
+        mc.snap.in_tpx = vec![0.0; ne];
+        mc.snap.out_hpx = vec![0.0; ne];
+        mc.snap.any_port = false;
+        // scalar references
+        let mut sums = [(0i64, 0i64); 8];
+        for case in 0..8usize {
+            let v0 = (case * 31) % ne;
+            let v1 = v0 + 1 + (next() as usize) % (ne - v0).min(64);
+            let w0 = (case * 17) % ne;
+            let w1 = w0 + 1 + (next() as usize) % (ne - w0).min(64);
+            let mut c0 = 0i64;
+            let mut c1 = 0i64;
+            for k in w0..w1 {
+                for m in v0..v1 {
+                    let t = mc.snap.in_eto[m] - mc.snap.in_eto[k];
+                    let prod = mc.snap.in_xp[m].wrapping_mul(mc.snap.in_xp[k]);
+                    if t > 0 { c0 += prod as i64; } else if t < 0 { c1 += prod as i64; }
+                }
+            }
+            sums[case] = (c0, c1);
+            unsafe {
+                let (s0, s1) = (0i64, 0i64);
+                let mut r0 = s0;
+                let mut r1 = s1;
+                mc.in_cross_pair_avx2(v0, v1, w0, w1, &mut r0, &mut r1);
+                assert_eq!((r0, r1), sums[case], "in case {case}: [{v0}..{v1}) x [{w0}..{w1})");
+            }
+        }
+        // out (i32 wrapping) — verify against scalar with adversarial products
+        let mut seed2 = 0x9E3779B97F4A7C15u64;
+        let mut next2 = move || {
+            seed2 ^= seed2 << 13;
+            seed2 ^= seed2 >> 7;
+            seed2 ^= seed2 << 17;
+            seed2
+        };
+        mc.snap.out_xp = (0..ne).map(|_| (next2() % (i32::MAX as u64 / 3)) as i32).collect();
+        for case in 0..8usize {
+            let v0 = (case * 29) % ne;
+            let v1 = v0 + 1 + (next2() as usize) % (ne - v0).min(64);
+            let w0 = (case * 13) % ne;
+            let w1 = w0 + 1 + (next2() as usize) % (ne - w0).min(64);
+            let mut c0 = 0i32;
+            let mut c1 = 0i32;
+            for k in w0..w1 {
+                for m in v0..v1 {
+                    let t = mc.snap.out_eho[m] - mc.snap.out_eho[k];
+                    let prod = mc.snap.out_xp[m].wrapping_mul(mc.snap.out_xp[k]);
+                    if t > 0 { c0 = c0.wrapping_add(prod); } else if t < 0 { c1 = c1.wrapping_add(prod); }
+                }
+            }
+            unsafe {
+                let (mut r0, mut r1) = (0i32, 0i32);
+                mc.out_cross_pair_avx2(v0, v1, w0, w1, &mut r0, &mut r1);
+                assert_eq!((r0, r1), (c0, c1), "out case {case}");
+            }
+        }
     }
 
     #[test]

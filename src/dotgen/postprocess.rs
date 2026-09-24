@@ -4,7 +4,7 @@
 //! `Offset`, and `translate_drawing` (rotation + translation of every
 //! coordinate into final drawing space).
 
-use super::geom::{PointF, BoxF};
+use super::geom::{BoxF, PointF};
 use super::model::{self, Fg, GId, RankDir};
 
 /// `PAD(dimen)` (macros.h) — label padding: x += 4·GAP, y += 2·GAP, GAP=4.
