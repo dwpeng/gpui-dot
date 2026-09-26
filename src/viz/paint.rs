@@ -56,14 +56,9 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
     let transform = frame.transform;
     // Copy the theme colors out up front so `cx` stays free for the text
     // shaping calls below.
-    let (popover, border, primary, theme_radius) = {
+    let (primary, theme_radius) = {
         let theme = cx.theme();
-        (
-            theme.popover,
-            theme.border,
-            theme.primary,
-            theme.radius.as_f32(),
-        )
+        (theme.primary, theme.radius.as_f32())
     };
     let edge_ink = ink(cx);
     let edge_ink_faded = edge_ink.opacity(0.6);
@@ -161,8 +156,11 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
     // borrows the edge's parsed colorList (no per-frame clone); the theme ink
     // at edge opacity stands in when the attribute carries no usable color.
     let fallback = [edge_ink_faded];
+    // One set of dash-walk buffers for the whole frame: a graph of dashed
+    // edges allocates its flattening storage once, not once per edge.
+    let mut dash = DashScratch::default();
     for edge in edges.iter() {
-        if !overlaps(edge_bounds(edge), visible) {
+        if !edge_visible(edge, visible) {
             continue;
         }
         let width = px((edge.penwidth * transform.zoom).max(hairline));
@@ -171,10 +169,10 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
         } else {
             &fallback
         };
-        paint_edge(edge, frame, width, colors, window);
+        paint_edge(edge, frame, width, colors, &mut dash, window);
     }
     for edge in edges.iter() {
-        if !overlaps(edge_bounds(edge), visible) {
+        if !edge_visible(edge, visible) {
             continue;
         }
         // arrows take the colorList's last color (emit.c)
@@ -201,13 +199,12 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
         if !overlaps((box_.x, box_.y, box_.w, box_.h), visible) {
             continue;
         }
-        paint_node(
-            frame, index, node, &box_, popover, border, primary, window, cx,
-        );
+        paint_node(frame, index, node, &box_, primary, window, cx);
     }
     if let Some(drag) = frame.node_drag
-        && let Some(index) = document.view.nodes.get(drag.node).map(|_| drag.node)
+        && document.view.nodes.get(drag.node).is_some()
     {
+        let index = drag.node;
         let box_ = node_box(index);
         if overlaps((box_.x, box_.y, box_.w, box_.h), visible) {
             paint_node(
@@ -215,8 +212,6 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
                 index,
                 &document.view.nodes[index],
                 &box_,
-                popover,
-                border,
                 primary,
                 window,
                 cx,
@@ -234,6 +229,15 @@ pub(crate) fn graph(frame: &Frame<'_>, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Reusable dash-walk buffers, owned by the frame loop in [`graph`] and
+/// cleared as they are consumed, so no single dashed edge allocates.
+#[derive(Default)]
+struct DashScratch {
+    stack: Vec<[(f32, f32); 4]>,
+    samples: Vec<(f32, f32)>,
+    pts: Vec<Point<Pixels>>,
+}
+
 /// Paints one routed edge: the flattened spline, dashed or solid. A
 /// colorList (`color="red:blue"`) paints segment `i` with `colors[i %
 /// len]` (emit.c cycles the list along the spline).
@@ -242,11 +246,9 @@ fn paint_edge(
     frame: &Frame<'_>,
     width: Pixels,
     colors: &[Hsla],
+    dash: &mut DashScratch,
     window: &mut Window,
 ) {
-    if edge.segments.is_empty() {
-        return;
-    }
     let transform = frame.transform;
     // World → screen, transformed lazily per use (no per-edge buffer).
     let seg4 = |s: &[(f32, f32); 4]| -> [Point<Pixels>; 4] {
@@ -258,36 +260,38 @@ fn paint_edge(
         ]
     };
     if edge.dashed || edge.dotted {
-        let (dash, gap) = if edge.dotted {
+        let (dash_len, gap) = if edge.dotted {
             (width, width * 1.8)
         } else {
             (px(6.0), px(4.0))
         };
-        // One pair of scratch buffers for the whole edge: each segment is
-        // flattened into them and dash-walked, no per-segment allocation.
-        let mut stack: Vec<[(f32, f32); 4]> = Vec::new();
-        let mut samples: Vec<(f32, f32)> = Vec::new();
-        let mut pts: Vec<Point<Pixels>> = Vec::new();
+        // Walk each segment into the frame's scratch buffers.
+        // `flatten_cubic_into` clears the stack itself, so only the
+        // sample output needs clearing here.
         for (i, s) in edge.segments.iter().enumerate() {
             let [p0, p1, p2, p3] = seg4(s);
-            pts.clear();
-            pts.push(p0);
-            samples.clear();
+            dash.pts.clear();
+            dash.pts.push(p0);
+            dash.samples.clear();
             primitives::flatten_cubic_into(
                 (p0.x.as_f32(), p0.y.as_f32()),
                 (p1.x.as_f32(), p1.y.as_f32()),
                 (p2.x.as_f32(), p2.y.as_f32()),
                 (p3.x.as_f32(), p3.y.as_f32()),
                 primitives::BEZIER_TOLERANCE,
-                &mut stack,
-                &mut samples,
+                &mut dash.stack,
+                &mut dash.samples,
             );
-            pts.extend(samples.iter().map(|&(x, y)| point(px(x), px(y))));
+            dash.pts.extend(
+                dash.samples
+                    .iter()
+                    .map(|&(x, y)| point(px(x), px(y))),
+            );
             primitives::stroke_dashed_polyline(
                 window,
-                &pts,
+                &dash.pts,
                 width,
-                dash,
+                dash_len,
                 gap,
                 colors[i % colors.len()],
             );
@@ -309,8 +313,16 @@ fn paint_edge(
 }
 
 /// The world-space bounding box of a routed edge: the Bézier control-point
-/// hull covers the curve, and the arrowheads sit at its ends.
-fn edge_bounds(edge: &ViewEdge) -> (f32, f32, f32, f32) {
+/// hull covers the curve, and the arrowheads sit at its ends, or `None`
+/// when the edge was never routed.
+fn edge_bounds(edge: &ViewEdge) -> Option<(f32, f32, f32, f32)> {
+    // An edge with no segments — a `concentrate` input that lost to its
+    // concentrator — has nothing to paint and no hull to cull against.
+    // Returning `None` keeps the callers from having to notice that the
+    // empty-hull box would be inverted.
+    if edge.segments.is_empty() {
+        return None;
+    }
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for s in &edge.segments {
         for &(x, y) in s {
@@ -320,7 +332,13 @@ fn edge_bounds(edge: &ViewEdge) -> (f32, f32, f32, f32) {
             y1 = y1.max(y);
         }
     }
-    (x0, y0, x1 - x0, y1 - y0)
+    Some((x0, y0, x1 - x0, y1 - y0))
+}
+
+/// True when a routed edge is worth painting: it has segments, and its
+/// control-point hull intersects the visible world rect.
+fn edge_visible(edge: &ViewEdge, visible: (f32, f32, f32, f32)) -> bool {
+    edge_bounds(edge).is_some_and(|bounds| overlaps(bounds, visible))
 }
 
 /// True when a world-space `(x, y, w, h)` box intersects the visible rect.
@@ -331,7 +349,7 @@ fn overlaps(box_: (f32, f32, f32, f32), visible: (f32, f32, f32, f32)) -> bool {
 
 /// Paints dot's arrowhead pieces.
 fn paint_arrows(parts: &[ArrowPart], frame: &Frame<'_>, color: Hsla, window: &mut Window) {
-    let width = px((1.0 * frame.transform.zoom).max(1.0 / window.scale_factor()));
+    let width = px(frame.transform.zoom.max(1.0 / window.scale_factor()));
     for part in parts {
         match part {
             ArrowPart::Polygon(points, filled) => {
@@ -404,16 +422,13 @@ fn paint_arrows(parts: &[ArrowPart], frame: &Frame<'_>, color: Hsla, window: &mu
     }
 }
 
-/// Draws one node: its shape (fill + outline rings), selection/hover
-/// highlight and its label.
-#[allow(clippy::too_many_arguments)]
+/// Draws one node: its shape (fill + outline rings), its selection
+/// highlight and its label. Hover highlights nothing.
 fn paint_node(
     frame: &Frame<'_>,
     index: usize,
     node: &ViewNode,
     box_: &super::layout::NodeBox,
-    popover: Hsla,
-    border: Hsla,
     primary: Hsla,
     window: &mut Window,
     cx: &mut App,
@@ -489,7 +504,6 @@ fn paint_node(
                     );
                 }
             }
-            let _ = (popover, border);
         }
         NodeShape::Ellipse(rings) => {
             // One true ellipse per periphery ring (innermost first; the node
@@ -550,7 +564,6 @@ fn paint_node(
                     primitives::stroke_ellipse(window, ring_bounds, width, stroke);
                 }
             }
-            let _ = (popover, border);
         }
         NodeShape::Polygons(rings) => {
             // Only the first `peripheries` rings are drawn ink: any extra
@@ -586,7 +599,6 @@ fn paint_node(
                     poly.outline(window, width, stroke);
                 }
             }
-            let _ = (popover, border);
         }
     }
 
@@ -608,7 +620,7 @@ fn paint_node(
             .collect();
         primitives::stroke_segments(window, &segments, width, stroke);
         if frame.show_node_labels {
-            let font_size = label_font_size(frame, index);
+            let font_size = label_font_size(frame);
             let color = node
                 .label
                 .as_ref()
@@ -643,8 +655,9 @@ fn paint_node(
     }
 }
 
-/// The node label font size in screen pixels (`label.scale` from settings).
-fn label_font_size(frame: &Frame<'_>, _index: usize) -> Pixels {
+/// The record-field label font size in screen pixels (`label_scale` from
+/// settings — the same scale the layout was measured at).
+fn label_font_size(frame: &Frame<'_>) -> Pixels {
     px(14.0 * frame.label_scale * frame.transform.zoom)
 }
 

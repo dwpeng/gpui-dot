@@ -16,7 +16,8 @@ actions!(
         ZoomIn,
         ZoomOut,
         FitGraph,
-        ClearSelection
+        ClearSelection,
+        SearchTabs
     ]
 );
 
@@ -35,6 +36,7 @@ actions!(
 /// - `secondary-=`  → zoom in
 /// - `secondary--`  → zoom out
 /// - `secondary-0`  → fit the graph to the window
+/// - `secondary-shift-a` → open the tab list's search field
 /// - `escape`       → clear the current node selection
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -47,6 +49,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-=", ZoomIn, None),
         KeyBinding::new("secondary--", ZoomOut, None),
         KeyBinding::new("secondary-0", FitGraph, None),
+        KeyBinding::new("secondary-shift-a", SearchTabs, None),
         KeyBinding::new("escape", ClearSelection, None),
     ]);
 }

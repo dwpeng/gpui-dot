@@ -155,7 +155,7 @@ fn points2coeff(v0: f64, v1: f64, v2: f64, v3: f64, coeff: &mut [f64; 4]) {
 }
 
 fn addroot(root: f64, roots: &mut [f64; 4], rootn: &mut usize) {
-    if root >= 0.0 && root <= 1.0 {
+    if (0.0..=1.0).contains(&root) {
         roots[*rootn] = root;
         *rootn += 1;
     }
@@ -269,22 +269,21 @@ fn isdiagonal(i: usize, ip2: usize, pts: &[usize], pnls: &[Pnl]) -> bool {
     let ip1 = (i + 1) % n;
     let im1 = (i + n - 1) % n;
     let p = |k: usize| pnls[pts[k]].pp;
-    let res;
-    if ccw(p(im1), p(i), p(ip1)) == ISCCW {
-        res = ccw(p(i), p(ip2), p(im1)) == ISCCW && ccw(p(ip2), p(i), p(ip1)) == ISCCW;
+    
+    let res = if ccw(p(im1), p(i), p(ip1)) == ISCCW {
+        ccw(p(i), p(ip2), p(im1)) == ISCCW && ccw(p(ip2), p(i), p(ip1)) == ISCCW
     } else {
-        res = ccw(p(i), p(ip2), p(ip1)) == ISCW;
-    }
+        ccw(p(i), p(ip2), p(ip1)) == ISCW
+    };
     if !res {
         return false;
     }
     for j in 0..n {
         let jp1 = (j + 1) % n;
-        if !(j == i || jp1 == i || j == ip2 || jp1 == ip2) {
-            if intersects(p(i), p(ip2), p(j), p(jp1)) {
+        if !(j == i || jp1 == i || j == ip2 || jp1 == ip2)
+            && intersects(p(i), p(ip2), p(j), p(jp1)) {
                 return false;
             }
-        }
     }
     true
 }

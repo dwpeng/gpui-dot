@@ -55,7 +55,7 @@ fn estimate_measured(graph: &crate::graph::model::Graph) -> Measured {
         .iter()
         .enumerate()
         .map(|(i, n)| {
-            let text = label_plain(&graph, i, &n.label());
+            let text = label_plain(graph, i, &n.label());
             let lines: usize = text.chars().filter(|&c| c == '\n').count() + 1;
             let f = font_size(&n.attrs);
             let w = text
@@ -71,7 +71,7 @@ fn estimate_measured(graph: &crate::graph::model::Graph) -> Measured {
         .enumerate()
         .map(|(i, e)| {
             e.label().map(|text| {
-                let text = label_plain_edge(&graph, i, text);
+                let text = label_plain_edge(graph, i, text);
                 let lines: usize = text.matches('\n').count() + 1;
                 let f = font_size(&e.attrs);
                 let w = text
@@ -313,7 +313,7 @@ fn write_node(svg: &mut String, n: &ViewNode) {
                     svg,
                     r#"<text x="{:.2}" y="{:.2}" font-size="{:.1}" text-anchor="middle" fill="{color}">{}</text>"#,
                     x + w / 2.0,
-                    y + h / 2.0 + l.font_size as f32 * 0.4,
+                    y + h / 2.0 + l.font_size * 0.4,
                     l.font_size,
                     escape(text)
                 );

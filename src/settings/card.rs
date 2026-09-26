@@ -5,16 +5,17 @@ use gpui_kit::component::input::{InputEvent, InputState, NumberInput};
 use gpui_kit::component::separator::Separator;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Entity, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder as _,
+    RenderOnce, SharedString, Styled, Subscription, Window, div,
 };
 
 /// Callback shape shared by every control kind.
 type OnChange<T> = Rc<dyn Fn(T, &mut Window, &mut App)>;
 
 /// One row of the settings card: a title, an optional description, and a
-/// control of one of the three supported kinds.
+/// control of one of the supported kinds ([`SettingKind`]).
 #[derive(Clone)]
 pub struct SettingRow {
     /// Stable element id, unique per row.
@@ -74,7 +75,7 @@ impl SettingRow {
     }
 }
 
-/// The three kinds of settings controls the card supports.
+/// The kinds of settings control the card supports.
 #[derive(Clone)]
 enum SettingKind {
     /// A boolean toggle switch.
@@ -143,16 +144,18 @@ impl SettingRow {
                                 if let InputEvent::Change = event {
                                     input.update(cx, |input, cx| {
                                         let text = input.value();
-                                        if text == state.initial_value.to_string() {
-                                            return;
-                                        }
                                         // Unparsable intermediates are left
                                         // alone; out-of-range text stays too
                                         // and is clamped on blur.
                                         if let Ok(parsed) = text.parse::<f64>() {
                                             let clamped = parsed.clamp(min, max);
-                                            on_change(clamped, window, cx);
-                                            state.initial_value = clamped;
+                                            // Compare numerically, not as text:
+                                            // "1.50" and "1.5" are one value
+                                            // and must not fire a change.
+                                            if (clamped - state.initial_value).abs() > 1e-9 {
+                                                on_change(clamped, window, cx);
+                                                state.initial_value = clamped;
+                                            }
                                         }
                                     });
                                 }

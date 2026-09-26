@@ -92,7 +92,7 @@ impl<'a> NsCtx<'a> {
             .fg
             .nodes
             .iter()
-            .map(|n| n.par.map_or(NO_EDGE, |e| e))
+            .map(|n| n.par.unwrap_or(NO_EDGE))
             .collect();
         self.n_mark = self.fg.nodes.iter().map(|n| n.mark as u8).collect();
         self.n_normal = self
@@ -179,10 +179,10 @@ impl<'a> NsCtx<'a> {
         );
         self.e_tidx[e] = self.tree_edge.len() as i32;
         self.tree_edge.push(e);
-        let n = self.e_tail[e] as usize;
+        let n = self.e_tail[e];
         self.n_mark[n] = 1;
         self.tree_out[n].push(e);
-        let n = self.e_head[e] as usize;
+        let n = self.e_head[e];
         self.n_mark[n] = 1;
         self.tree_in[n].push(e);
     }
@@ -600,14 +600,12 @@ impl<'a> NsCtx<'a> {
             let top = todo.len() - 1;
             let (fv, fts, ffrom, _, _) = todo[top];
 
-            if todo[top].3 == 0 && todo[top].4 == 0 {
-                if let Some(b) = best {
-                    if self.slack(b) == 0 {
+            if todo[top].3 == 0 && todo[top].4 == 0
+                && let Some(b) = best
+                    && self.slack(b) == 0 {
                         todo.pop();
                         continue;
                     }
-                }
-            }
 
             let mut updated = false;
 
@@ -661,11 +659,10 @@ impl<'a> NsCtx<'a> {
                     break;
                 }
                 let t = self.e_tail[e];
-                if root_of(t) != fts {
-                    if best.is_none() || self.slack(e) < self.slack(best.unwrap()) {
+                if root_of(t) != fts
+                    && (best.is_none() || self.slack(e) < self.slack(best.unwrap())) {
                         best = Some(e);
                     }
-                }
                 todo[top].4 += 1;
             }
             if updated {
@@ -945,7 +942,7 @@ impl<'a> NsCtx<'a> {
     /// `x_cutval` — set the cut value of f assuming one side is done.
     fn x_cutval(&mut self, f: EId) {
         let (ft, fh) = (self.e_tail[f], self.e_head[f]);
-        let (v, dir) = if self.n_par[ft] == f as usize {
+        let (v, dir) = if self.n_par[ft] == f {
             (ft, 1)
         } else {
             (fh, -1)
@@ -1075,11 +1072,11 @@ impl<'a> NsCtx<'a> {
     fn dfs_range(&mut self, v: NId, par: Option<EId>, low: i32) -> i32 {
         let mut lim: i32 = 0;
 
-        if self.n_par[v] == par.map_or(NO_EDGE, |e| e as usize) && self.n_low[v] == low {
+        if self.n_par[v] == par.unwrap_or(NO_EDGE) && self.n_low[v] == low {
             return self.n_lim[v] + 1;
         }
 
-        self.n_par[v] = par.map_or(NO_EDGE, |e| e as usize);
+        self.n_par[v] = par.unwrap_or(NO_EDGE);
         self.n_low[v] = low;
         let mut todo: Vec<(NId, Option<EId>, i32, usize, usize)> = vec![(v, par, low, 0, 0)];
 

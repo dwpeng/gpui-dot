@@ -621,6 +621,7 @@ fn local_cross(fg: &Fg, l: &[EId], dir: i32) -> i32 {
 /// * any structural change (rank building, flat-edge rewiring, cluster
 ///   expansion, component merge, `ordering` edges) drops `valid`, and the
 ///   next hot-loop entry ([`MinCross::ensure_snap`]) rebuilds in O(V+E).
+#[derive(Default)]
 struct Snap {
     /// `ND_order` per node.
     ord: Vec<i32>,
@@ -663,32 +664,6 @@ struct Snap {
     valid: bool,
 }
 
-impl Default for Snap {
-    fn default() -> Self {
-        Snap {
-            ord: Vec::new(),
-            nclust: Vec::new(),
-            skel: Vec::new(),
-            out_start: Vec::new(),
-            in_start: Vec::new(),
-            out_edge: Vec::new(),
-            in_edge: Vec::new(),
-            out_eho: Vec::new(),
-            out_xp: Vec::new(),
-            out_hpx: Vec::new(),
-            out_hpo: Vec::new(),
-            in_eto: Vec::new(),
-            in_xp: Vec::new(),
-            in_tpx: Vec::new(),
-            in_tpo: Vec::new(),
-            out_slot: Vec::new(),
-            in_slot: Vec::new(),
-            mval: Vec::new(),
-            any_port: false,
-            valid: false,
-        }
-    }
-}
 
 /// The module-static state of mincross.c (L159-179) plus the rank-window
 /// bookkeeping the C encodes in raw interior pointers (see the module docs).
@@ -1217,11 +1192,10 @@ impl MinCross {
             let maxthispass;
             if pass <= 1 {
                 maxthispass = 4.min(self.maxiter); // MIN(4, MaxIter) (L704)
-                if g == fg.root_g() {
-                    if self.build_ranks(fg, g, pass) != 0 {
+                if g == fg.root_g()
+                    && self.build_ranks(fg, g, pass) != 0 {
                         return -1;
                     }
-                }
                 if pass == 0 {
                     self.flat_breakcycles(fg, g); // L709-710
                 }
@@ -1468,8 +1442,8 @@ impl MinCross {
         // sums only read the *other* ranks' orders); its neighbors' pairs
         // changed membership. Neighbor ranks' caches die wholesale.
         let (a, b) = (vi.min(wi) as usize, vi.max(wi) as usize);
-        if let Some(xc) = self.xcache.get_mut(ri(r)) {
-            if xc.n > 0 && a < xc.n {
+        if let Some(xc) = self.xcache.get_mut(ri(r))
+            && xc.n > 0 && a < xc.n {
                 if b == a + 1 {
                     let e = &mut xc.entries[a];
                     if e.ok {
@@ -1489,14 +1463,12 @@ impl MinCross {
                     xc.entries[b - 1].ok = false;
                 }
             }
-        }
         for rr in [r - 1, r + 1] {
-            if rr >= 0 {
-                if let Some(xc) = self.xcache.get_mut(ri(rr)) {
+            if rr >= 0
+                && let Some(xc) = self.xcache.get_mut(ri(rr)) {
                     xc.n = 0;
                     xc.entries.clear();
                 }
-            }
         }
         // C aliases the clusters' rank slices into the root's row; this port
         // keeps copies, so the swap has to be mirrored.
@@ -1659,9 +1631,9 @@ impl MinCross {
     // Medians and reorder (mincross.c:1404-1453, 1583-1670)
     // -----------------------------------------------------------------------
 
-    /// `VAL(node, port)` (mincross.c:1612) inlines as
-    /// `MC_SCALE * ND_order(node) + port.order` (C `int` arithmetic); the
-    /// medians loop reads both operands straight from the snapshot.
+    // `VAL(node, port)` (mincross.c:1612) inlines as
+    // `MC_SCALE * ND_order(node) + port.order` (C `int` arithmetic); the
+    // medians loop reads both operands straight from the snapshot.
 
     /// `medians` (mincross.c:1614-1670) — compute `ND_mval` for every node of
     /// rank `r0` from rank `r1` (the side we came from); returns `hasfixed`.

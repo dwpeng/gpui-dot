@@ -1,67 +1,597 @@
-//! The tab strip: one tab per open DOT file, the active one highlighted and
-//! each tab carrying its own close button. Pure view builder over the owning
-//! [`GraphView`](crate::app::GraphView) — no state of its own.
+//! The tab strip: one tab per open DOT file, a tab list at the far left and
+//! the `+` that opens another file right behind the last tab. Pure view
+//! builder over the owning [`GraphView`](crate::app::GraphView).
+//!
+//! It is rendered *inside* the title bar (see [`super::title_bar`]) so the two
+//! share one row, and follows the current Chrome tab design:
+//!
+//! * every control in the row — the tab list, a tab's close button, the `+` —
+//!   sits on one horizontal centre line, so a tab is centred in the strip and
+//!   the label, the `✕` and the neighbouring buttons all line up;
+//! * a tab is a shape that *floats* in the strip: rounded on all four corners
+//!   with a gap above and below it, rather than a block welded to the bottom
+//!   edge. That is why the title bar keeps its own divider underneath;
+//! * the active tab is painted with the surface the drawing itself sits on,
+//!   idle tabs are transparent, and hovering one lifts it;
+//! * a hairline separator stands between two idle neighbours, inset from both
+//!   ends, and is left out on either side of the active tab;
+//! * every tab is the same width, and every tab carries its own close button:
+//!   a name too long for that width is truncated rather than widening its
+//!   tab, so the strip reads as a row of equal tabs. The width is an equal
+//!   share of the row, so it answers to the window. A middle click closes the
+//!   tab under the cursor, and hovering one names the file's whole path;
+//! * a tab is dragged by its body to another slot, which moves it there: the
+//!   gesture lives entirely in the payload and the drop target, so it needs no
+//!   drag state in the view;
+//! * tabs are adjacent — no gap — and shrink together once they outrun the
+//!   row, down to a floor, so the row never pushes the `+` or the window
+//!   controls out. Whatever does not fit is still reachable from the tab list
+//!   and from `Ctrl+Tab`.
+//!
+//! The tab list opens a search panel ([`tab_menu`]) rather than a plain menu:
+//! the field filters on the file name and its path, each row names the document
+//! and where it lives, and a row's `✕` closes it without leaving the panel.
+//!
+//! The strip is drawn by hand rather than with the kit's `TabBar` because
+//! `Tab::render` applies its own corner radius *after* any the caller set, so a
+//! `Tab` cannot be given Chrome's rounded shape.
+//!
+//! Every interactive part of the strip blocks the mouse. The title bar marks
+//! the region it hands to the window manager as a caption
+//! (`WindowControlArea::Drag`), and a hitbox that blocks stops that marker from
+//! claiming the click — which is what keeps a tab click from being read as
+//! "move the window": on Linux it keeps the title bar's own drag handlers from
+//! arming, and on Windows it drops the caption area out of the hit test. The
+//! empty stretch of row after the `+` stays unblocked on purpose, so dragging
+//! there still moves the window.
 
+use gpui_kit::base::StyledExt as _;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::popover::Popover;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{App, Context, IntoElement, SharedString, Styled, Window, px};
+use gpui_kit::{
+    Anchor, App, AppContext as _, Background, Context, Entity, Hsla,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement, Render, SharedString,
+    StatefulInteractiveElement as _, Styled, Subscription, TestSupportExt as _, WeakEntity,
+    Window, div, px,
+};
 
 use crate::app::GraphView;
 use crate::icons::IconName;
 
-/// Renders the tab strip for `view`.
-pub fn tab_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoElement {
+/// A tab floats inside the taller title bar: this tall, which leaves an equal
+/// gap above and below and keeps every control in the row on one centre line.
+const TAB_HEIGHT: f32 = 28.0;
+/// Chrome rounds a tab on all four corners; it is a floating shape, not a
+/// block with a squared-off foot.
+const TAB_RADIUS: f32 = 8.0;
+/// The widest a tab grows, however wide the window is: past this a couple of
+/// tabs would be absurdly wide, and the leftover row is left empty.
+const TAB_MAX_WIDTH: f32 = 240.0;
+/// Where equal shares stop shrinking; past this the lane clips, and the
+/// tab list is the way back to what scrolled out.
+const TAB_MIN_WIDTH: f32 = 56.0;
+/// What a tab does not get: the row's own left inset, the tab list, the `+`,
+/// and the gaps around the lane. Subtracted from the window width to work out
+/// what the tabs have to share.
+const ROW_CHROME_WIDTH: f32 =
+    crate::ui::title_bar::ROW_LEFT_INSET + CONTROL_SIZE + GAP + GAP + CONTROL_SIZE;
+/// The gap between the row's controls and the lane.
+const GAP: f32 = 4.0;
+/// How far the separator between two idle tabs stays off the ends.
+const SEPARATOR_INSET: f32 = 6.0;
+/// The footprint of the two controls beside the tabs: Chrome gives the tab
+/// list and the `+` the same small square, a shade lighter on hover.
+const CONTROL_SIZE: f32 = 26.0;
+const CONTROL_RADIUS: f32 = 6.0;
+/// The search panel's width, and how tall its list grows before it scrolls.
+const MENU_WIDTH: f32 = 300.0;
+const MENU_LIST_MAX_HEIGHT: f32 = 360.0;
+
+/// The retained state of the search panel's field. Held in a keyed state so the
+/// query survives the re-render each keystroke causes.
+struct TabSearch {
+    input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
+}
+
+/// One row of the search panel: the tab's id, its name and where it lives.
+type TabEntry = (u64, SharedString, SharedString);
+
+/// Renders the tab strip for `view`: the tab list, the tabs, then the `+`.
+pub fn tab_bar(
+    view: &GraphView,
+    window: &Window,
+    cx: &mut Context<GraphView>,
+) -> impl IntoElement {
     let weak = cx.weak_entity();
-    // The `+` opens the file browser. It rides the tab strip's suffix slot,
-    // which sits outside the scrolling region, so it stays pinned at the
-    // right edge no matter how many tabs are open. With no tabs the strip
-    // stays bare — the empty canvas below carries the open action instead.
-    let has_tabs = view.tabs().next().is_some();
-    let add = {
-        let weak = weak.clone();
-        Button::new("tab-add")
-            .icon(IconName::NewTab)
-            .ghost()
-            .small()
-            .tooltip("Open a DOT file (Ctrl+O)")
-            .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                let _ = weak.update(cx, |view, cx| view.open_graph(cx));
-            })
-    };
-    let tabs = view
+    let theme = cx.theme();
+    // Chrome's palette, in the theme's own words: the active tab wears the
+    // surface the canvas is painted with, idle tabs wear nothing, hovering one
+    // lifts it off the frame, and the separator is a hairline of ink rather
+    // than a theme border — the frame is already a border colour, so a
+    // border-toned line on it would not read at all.
+    let active_surface: Hsla = theme.background;
+    let hover_tint: Background = theme.tokens.secondary_hover.into();
+    let active_ink: Hsla = theme.tab_active_foreground;
+    let idle_ink: Hsla = theme.tab_foreground;
+    let separator: Hsla = theme.muted_foreground.opacity(0.35);
+    let active_index = view.active_index();
+    let active_id = view.active().map(|tab| tab.id);
+    let entries: Vec<TabEntry> = view
         .tabs()
         .map(|tab| {
-            let tab_id = tab.id;
-            // The close button stops propagation: a click on it must close
-            // the tab, not also switch to it through the tab bar's handler.
-            let close = {
-                let weak = weak.clone();
-                Button::new(SharedString::from(format!("tab-close-{tab_id}")))
-                    .icon(IconName::CloseTab)
-                    .ghost()
-                    .xsmall()
-                    .pr_1()
-                    .tooltip("Close tab (Ctrl+W)")
-                    .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                        cx.stop_propagation();
-                        let _ = weak.update(cx, |view, cx| view.close_tab(tab_id, cx));
+            (
+                tab.id,
+                SharedString::from(tab.title.clone()),
+                SharedString::from(tab.path.display().to_string()),
+            )
+        })
+        .collect();
+    let has_tabs = !entries.is_empty();
+    let tab_width = tab_width(window, entries.len());
+
+    // The tab list, at the far left: it opens the search panel below the button.
+    let tab_list = {
+        let weak = weak.clone();
+        let entries = entries.clone();
+        div()
+            .id("dotv-tab-list")
+            .flex_shrink_0()
+            .occlude()
+            .test_support()
+            .child(
+                Popover::new("dotv-tab-menu")
+                    // Top-left: the panel's top-left corner hangs off the
+                    // trigger, so the panel opens downwards into the window.
+                    .anchor(Anchor::TopLeft)
+                    .open(view.tab_menu_open)
+                    .on_open_change({
+                        let weak = weak.clone();
+                        move |open, _window, cx| {
+                            let _ = weak.update(cx, |view, cx| {
+                                if view.tab_menu_open != *open {
+                                    view.tab_menu_open = *open;
+                                    cx.notify();
+                                }
+                            });
+                        }
                     })
+                    .trigger(
+                        Button::new("tab-list")
+                            .icon(Icon::new(IconName::ChevronDown))
+                            .ghost()
+                            .small()
+                            .w(px(CONTROL_SIZE))
+                            .h(px(CONTROL_SIZE))
+                            .rounded(px(CONTROL_RADIUS))
+                            .tooltip("Search tabs (Ctrl+Shift+A)"),
+                    )
+                    .content(move |_, window, cx| {
+                        tab_menu(&weak, &entries, active_id, window, cx)
+                    }),
+            )
+    };
+
+    // The `+` follows the last tab, the way Chrome's does.
+    let add = {
+        let weak = weak.clone();
+        div()
+            .id("dotv-tab-add")
+            .flex_shrink_0()
+            .occlude()
+            .child(
+                Button::new("tab-add")
+                    .icon(IconName::NewTab)
+                    .ghost()
+                    .small()
+                    .w(px(CONTROL_SIZE))
+                    .h(px(CONTROL_SIZE))
+                    .rounded(px(CONTROL_RADIUS))
+                    .tooltip("Open a DOT file (Ctrl+O)")
+                    .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                        let _ = weak.update(cx, |view, cx| view.open_graph(cx));
+                    }),
+            )
+    };
+
+    let tabs = view
+        .tabs()
+        .enumerate()
+        .map(|(index, tab)| {
+            let tab_id = tab.id;
+            let is_active = index == active_index;
+            // The separator is dropped beside the active tab, as in Chrome:
+            // the tab's own edges do the separating there.
+            let show_separator = index > 0 && !is_active && index - 1 != active_index;
+            let fill = if is_active {
+                active_surface
+            } else {
+                Hsla::transparent_black()
             };
-            Tab::new()
-                .label(SharedString::from(tab.title.clone()))
-                .suffix(close)
+
+            div()
+                .id(SharedString::from(format!("dotv-tab-{tab_id}")))
+                .relative()
+                .occlude()
+                .test_support()
+                // A definite width, not one drawn from the title: every tab is
+                // the same size whatever it is called, so a long name is
+                // truncated instead of widening its tab (and the lane, and the
+                // row). The width itself follows the window, and the tabs shrink
+                // together if the estimate is off, down to the floor.
+                .w(px(tab_width))
+                .flex_shrink(1.0)
+                .min_w(px(TAB_MIN_WIDTH))
+                // GPUI's native tooltip takes a view, so the path is rendered by
+                // a tiny one of our own rather than by a text argument.
+                .tooltip({
+                    let path = SharedString::from(tab.path.display().to_string());
+                    move |_window, cx| cx.new(|_| TabTooltip { path: path.clone() }).into()
+                })
+                // Dragging the tab carries it to another slot: the payload is
+                // the tab's identity and its name for the chip that follows the
+                // cursor, so the gesture needs no state in the view. Dropping on
+                // a tab moves the dragged one into that tab's place.
+                .on_drag(
+                    TabDrag {
+                        tab_id,
+                        title: SharedString::from(tab.title.clone()),
+                    },
+                    |drag: &TabDrag, _offset, _window, cx| {
+                        cx.new(|_| TabDragChip {
+                            title: drag.title.clone(),
+                        })
+                    },
+                )
+                .drag_over::<TabDrag>(move |style, _drag, _window, _cx| {
+                    style.bg(hover_tint).rounded(px(TAB_RADIUS))
+                })
+                .on_drop({
+                    let weak = weak.clone();
+                    move |drag: &TabDrag, _window, cx| {
+                        let _ = weak.update(cx, |view, cx| view.move_tab(drag.tab_id, index, cx));
+                    }
+                })
+                .h(px(TAB_HEIGHT))
+                .flex()
+                .items_center()
+                .gap_1()
+                .pl_2()
+                .pr_1()
+                .rounded(px(TAB_RADIUS))
+                .text_sm()
+                .text_color(if is_active { active_ink } else { idle_ink })
+                .bg(fill)
+                .when(!is_active, |this| {
+                    this.hover(move |style| style.bg(hover_tint))
+                })
+                .when(show_separator, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(SEPARATOR_INSET))
+                            .bottom(px(SEPARATOR_INSET))
+                            .w(px(1.0))
+                            .bg(separator),
+                    )
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(SharedString::from(tab.title.clone())),
+                )
+                // Every tab carries one, so a tab in the background can be
+                // closed without being switched to first.
+                .child(close_button(tab_id, &weak))
+                // The press stops here. The row above is the window's caption
+                // area, and its own mouse-down arms a window move on the first
+                // movement — which would turn a tab drag into a window drag.
+                // A click would still work without this; a drag would not.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                // A middle click closes the tab under the cursor, as it does in
+                // every browser: the shortcut for an idle tab, which no longer
+                // shows a button of its own.
+                .on_mouse_down(MouseButton::Middle, {
+                    let weak = weak.clone();
+                    move |_, _window: &mut Window, cx: &mut App| {
+                        let _ = weak.update(cx, |view, cx| view.close_tab(tab_id, cx));
+                    }
+                })
+                .on_click({
+                    let weak = weak.clone();
+                    move |_, _window: &mut Window, cx: &mut App| {
+                        let _ = weak.update(cx, |view, cx| view.activate(index, cx));
+                    }
+                })
         })
         .collect::<Vec<_>>();
 
-    TabBar::new("dotv-tabs")
-        .children(tabs)
-        .selected_index(view.active_index())
-        .max_width(px(220.0))
-        .when(has_tabs, |bar| bar.suffix(add))
-        .on_click(move |index, _window, cx: &mut App| {
-            let index = *index;
-            let _ = weak.update(cx, |view, cx| view.activate(index, cx));
+    div()
+        .h_full()
+        .flex_1()
+        .min_w_0()
+        .h_flex()
+        .gap_1()
+        // No inset of its own: the title bar sets the row's left padding,
+        // and adding to it here would only push the tab list back in.
+        .when(has_tabs, |strip| {
+            strip
+                .child(tab_list)
+                .child(
+                    div()
+                        .h_full()
+                        .min_w_0()
+                        .flex_shrink(1.0)
+                        .flex()
+                        .items_center()
+                        .overflow_hidden()
+                        .children(tabs),
+                )
+                .child(add)
         })
+}
+
+/// The width one tab gets in a window this wide: an equal share of what the
+/// row has left once the tab list and the `+` have taken theirs, so the strip
+/// answers to the window — a wide window gets wide tabs, a narrow one narrow
+/// tabs — and is clamped at both ends so neither a couple of tabs nor a
+/// crowded strip looks wrong.
+fn tab_width(window: &Window, tabs: usize) -> f32 {
+    let shared = window.bounds().size.width.as_f32() - ROW_CHROME_WIDTH;
+    (shared / tabs.max(1) as f32).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
+}
+
+/// What a dragged tab hands to whatever it is dropped on: its identity, and
+/// the name to paint on the chip that follows the cursor. The strip is
+/// rebuilt every frame, so this payload is the whole of the gesture's state —
+/// none of it has to live in the view.
+#[derive(Clone)]
+pub(crate) struct TabDrag {
+    pub(crate) tab_id: u64,
+    pub(crate) title: SharedString,
+}
+
+/// The chip that follows the cursor while a tab is dragged: the tab's own
+/// name on the surface a tab is painted with, so the gesture reads as "this
+/// tab is moving" rather than as a generic drag.
+struct TabDragChip {
+    title: SharedString,
+}
+
+impl Render for TabDragChip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded(px(TAB_RADIUS))
+            .bg(cx.theme().background)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_sm()
+            .text_color(cx.theme().tab_active_foreground)
+            .child(self.title.clone())
+    }
+}
+
+/// What hovering a tab shows: where the document lives. The tab itself
+/// carries only the file's name, which a narrow window truncates and which
+/// two files can share; the path answers both, and the vertical slice this
+/// renders is whatever the native tooltip overlay holds it in.
+struct TabTooltip {
+    path: SharedString,
+}
+
+impl Render for TabTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_xs()
+            .text_color(cx.theme().popover_foreground)
+            .child(self.path.clone())
+    }
+}
+
+/// A tab's close button, with the observed wrapper the UI tests click through.
+fn close_button(tab_id: u64, weak: &WeakEntity<GraphView>) -> impl IntoElement {
+    let weak = weak.clone();
+    div()
+        .id(SharedString::from(format!("tab-close-{tab_id}")))
+        .flex_shrink_0()
+        .occlude()
+        .test_support()
+        // The tab around it is a drag handle; pressing the button must not
+        // start dragging it.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            Button::new(SharedString::from(format!(
+                "tab-close-button-{tab_id}"
+            )))
+            .icon(IconName::CloseTab)
+            .ghost()
+            .xsmall()
+            .tooltip("Close tab (Ctrl+W)")
+            .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                cx.stop_propagation();
+                let _ = weak.update(cx, |view, cx| view.close_tab(tab_id, cx));
+            }),
+        )
+}
+
+/// The tab search panel: a field over a list of every open document.
+///
+/// The field filters on the document's name and on its path, so two files that
+/// share a name stay tellable apart. Picking a row brings that tab forward and
+/// closes the panel; a row's `✕` closes the document and leaves the panel open,
+/// which is what Chrome does and what makes the panel usable for tidying up.
+///
+/// The entries are a snapshot taken when the strip was built: the panel is
+/// rebuilt on every view render, so closing a tab from here refreshes the list
+/// on the same frame.
+fn tab_menu(
+    weak: &WeakEntity<GraphView>,
+    entries: &[TabEntry],
+    active_id: Option<u64>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_kit::AnyElement {
+    let theme = cx.theme();
+    let muted = theme.muted_foreground;
+    let active_row: Background = theme.tokens.list_active.into();
+    let hover_row: Background = theme.tokens.list_hover.into();
+    let strong = theme.foreground;
+
+    // The query lives in a keyed state: retained across renders, so typing
+    // survives the repaint each keystroke triggers.
+    let search = {
+        let weak = weak.clone();
+        window.use_keyed_state("dotv-tab-search", cx, move |window, cx| {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search tabs"));
+            let _subscriptions = vec![cx.subscribe_in(&input, window, {
+                let weak = weak.clone();
+                move |_: &mut TabSearch, _input, event: &InputEvent, _window, cx| {
+                    if let InputEvent::Change = event {
+                        let _ = weak.update(cx, |_view, cx| cx.notify());
+                    }
+                }
+            })];
+            TabSearch {
+                input,
+                _subscriptions,
+            }
+        })
+    };
+    let query = search.read(cx).input.read(cx).value().to_lowercase();
+
+    let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
+    for (tab_id, title, path) in entries {
+        if !query.is_empty()
+            && !title.to_lowercase().contains(&query)
+            && !path.to_lowercase().contains(&query)
+        {
+            continue;
+        }
+        let is_active = active_id == Some(*tab_id);
+        rows.push(
+            div()
+                .id(SharedString::from(format!("dotv-tab-row-{tab_id}")))
+                .w_full()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .occlude()
+                .test_support()
+                .when(is_active, |this| this.bg(active_row))
+                .when(!is_active, |this| {
+                    this.hover(move |style| style.bg(hover_row))
+                })
+                .child(Icon::new(IconName::File).size_4().text_color(muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .v_flex()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_sm()
+                                .text_color(if is_active { strong } else { muted })
+                                .child(title.clone()),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(path.clone()),
+                        ),
+                )
+                .child(close_button(*tab_id, weak))
+                .on_click({
+                    let weak = weak.clone();
+                    let tab_id = *tab_id;
+                    move |_, _window: &mut Window, cx: &mut App| {
+                        let _ = weak.update(cx, |view, cx| {
+                            view.activate_tab_id(tab_id, cx);
+                            // Picking a tab is what the panel is for: close it.
+                            view.tab_menu_open = false;
+                            cx.notify();
+                        });
+                    }
+                })
+                .into_any_element(),
+        );
+    }
+    if rows.is_empty() {
+        rows.push(
+            div()
+                .px_2()
+                .py_4()
+                .text_sm()
+                .text_color(muted)
+                .child("No tab matches that")
+                .into_any_element(),
+        );
+    }
+
+    div()
+        .id("dotv-tab-menu-panel")
+        .test_support()
+        .v_flex()
+        .w(px(MENU_WIDTH))
+        .gap_1()
+        .child(
+            div()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    // The wrapper is what the UI tests focus: clicking it
+                    // puts the caret in the field inside.
+                    div()
+                        .id("dotv-tab-search-field")
+                        .flex_1()
+                        .min_w_0()
+                        .occlude()
+                        .test_support()
+                        .child(
+                            Input::new(&search.read(cx).input)
+                                .prefix(Icon::new(IconName::Search).size_3p5())
+                                .cleanable(true)
+                                .appearance(false),
+                        ),
+                )
+                .child(div().flex_shrink_0().text_xs().text_color(muted).child("Ctrl+Shift+A")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child("Open tabs"),
+        )
+        .child(
+            div()
+                .v_flex()
+                .gap_0p5()
+                .max_h(px(MENU_LIST_MAX_HEIGHT))
+                .overflow_y_scrollbar()
+                .children(rows),
+        )
+        .into_any_element()
 }

@@ -24,7 +24,7 @@ pub const ARR_TYPE_DOT: u32 = 6;
 pub const ARR_TYPE_CURVE: u32 = 7;
 pub const ARR_TYPE_GAP: u32 = 8;
 
-const ARR_MOD_OPEN: u32 = 1 << (BITS_PER_ARROW_TYPE + 0);
+const ARR_MOD_OPEN: u32 = 1 << BITS_PER_ARROW_TYPE;
 const ARR_MOD_INV: u32 = 1 << (BITS_PER_ARROW_TYPE + 1);
 const ARR_MOD_LEFT: u32 = 1 << (BITS_PER_ARROW_TYPE + 2);
 const ARR_MOD_RIGHT: u32 = 1 << (BITS_PER_ARROW_TYPE + 3);
@@ -730,20 +730,16 @@ pub fn resolved_flags(fg: &Fg, e: EId) -> (u32, u32) {
         }
         _ => {} // forward (default)
     }
-    if eflag == ARR_TYPE_NORM {
-        if let Some(name) = &d.arrowhead_attr {
-            if !name.is_empty() {
+    if eflag == ARR_TYPE_NORM
+        && let Some(name) = &d.arrowhead_attr
+            && !name.is_empty() {
                 eflag = arrow_match_name(name);
             }
-        }
-    }
-    if sflag == ARR_TYPE_NORM {
-        if let Some(name) = &d.arrowtail_attr {
-            if !name.is_empty() {
+    if sflag == ARR_TYPE_NORM
+        && let Some(name) = &d.arrowtail_attr
+            && !name.is_empty() {
                 sflag = arrow_match_name(name);
             }
-        }
-    }
     if d.conc_opp_flag {
         // pick up arrowhead of opposing edge
         if let Some(opp) = find_opposite(fg, e) {

@@ -16,11 +16,8 @@ use std::path::PathBuf;
 use tikv_jemallocator::Jemalloc;
 
 use clap::Parser as _;
-use gpui_kit::component::{Root, TitleBar};
-use gpui_kit::{
-    App, AppContext, Bounds, Focusable, TitlebarOptions, WindowBounds, WindowDecorations,
-    WindowOptions, point, px, size,
-};
+use gpui_kit::component::Root;
+use gpui_kit::{App, AppContext, Focusable, point, px, size};
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -74,6 +71,10 @@ fn main() {
     }
 
     let file = cli.file;
+    // The settings live in the user's config directory, so they outlive the
+    // window. A platform that offers no such directory simply gets a viewer
+    // that forgets.
+    let settings = settings::SettingsStore::user();
 
     gpui_kit::application()
         .with_assets(icons::AppAssets)
@@ -83,20 +84,12 @@ fn main() {
             fonts::apply_to_theme(cx);
             actions::bind_keys(cx);
             cx.spawn(async move |cx| {
-                let options = WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(Bounds {
-                        origin: point(px(0.0), px(0.0)),
-                        size: size(px(1280.0), px(860.0)),
-                    })),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("dotv — DOT Graph Viewer".into()),
-                        ..TitleBar::title_bar_options()
-                    }),
-                    window_decorations: Some(WindowDecorations::Client),
-                    ..TitleBar::window_options()
-                };
-                cx.open_window(options, |window, cx| {
-                    let view = cx.new(|cx| app::GraphView::new(file.clone(), cx));
+                let options = app::window_options(size(px(1280.0), px(860.0)), point(px(0.0), px(0.0)));
+                let file = file.clone();
+                let store = settings.clone();
+                cx.open_window(options, move |window, cx| {
+                    let view =
+                        cx.new(|cx| app::GraphView::new(file.clone(), store.clone(), cx));
                     let focus_handle = view.focus_handle(cx);
                     window.focus(&focus_handle, cx);
                     cx.new(|cx| Root::new(view, window, cx))

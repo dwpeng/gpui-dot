@@ -62,6 +62,13 @@ pub const DEF_POINT: f64 = 0.05;
 pub const MIN_POINT: f64 = 0.0003;
 
 /// `SQRT2` (arith.h:45).
+// Allowed rather than replaced by `std::f64::consts::SQRT_2`: the
+// literal *is* that constant to full `f64` precision, and spelling it
+// out keeps the one-to-one correspondence with the C source that the
+// rest of this port maintains.
+// `excessive_precision` too: the literal carries all 20 digits arith.h
+// spells out, which is more than an `f64` can represent.
+#[allow(clippy::approx_constant, clippy::excessive_precision)]
 pub const SQRT2: f64 = 1.41421356237309504880;
 
 /// `MC_SCALE` (const.h:99) — port `order` granularity (0..=256).
@@ -925,25 +932,25 @@ fn poly_init_poly(
 
     // get label dimensions + minimal whitespace around label
     let mut dimen = label_dimen;
-    if dimen.x > 0.0 || dimen.y > 0.0 {
-        if !is_plain {
-            match attr_str(attrs, "margin") {
-                Some(m) => {
-                    let (i, marginx, marginy) = sscanf_2lf(m);
-                    let (marginx, marginy) = (marginx.max(0.0), marginy.max(0.0));
-                    if i > 0 {
-                        dimen.x += 2.0 * inch2ps(marginx);
-                        if i > 1 {
-                            dimen.y += 2.0 * inch2ps(marginy);
-                        } else {
-                            dimen.y += 2.0 * inch2ps(marginx);
-                        }
+    if (dimen.x > 0.0 || dimen.y > 0.0)
+        && !is_plain
+    {
+        match attr_str(attrs, "margin") {
+            Some(m) => {
+                let (i, marginx, marginy) = sscanf_2lf(m);
+                let (marginx, marginy) = (marginx.max(0.0), marginy.max(0.0));
+                if i > 0 {
+                    dimen.x += 2.0 * inch2ps(marginx);
+                    if i > 1 {
+                        dimen.y += 2.0 * inch2ps(marginy);
                     } else {
-                        pad(&mut dimen);
+                        dimen.y += 2.0 * inch2ps(marginx);
                     }
+                } else {
+                    pad(&mut dimen);
                 }
-                None => pad(&mut dimen),
             }
+            None => pad(&mut dimen),
         }
     }
     let spacex = dimen.x - label_dimen.x;
@@ -1832,11 +1839,10 @@ fn parse_reclbl(
                         ..RecordField::default()
                     });
                 }
-                if let Some(id) = st.tmpport.take() {
-                    if let Some(idx) = fp {
+                if let Some(id) = st.tmpport.take()
+                    && let Some(idx) = fp {
                         rv.children[idx].id = Some(id);
                     }
-                }
                 if st.mode & (HASTEXT | HASTABLE) == 0 {
                     // empty field ⇒ " " (shapes.c:3436-3439)
                     st.mode |= HASTEXT;
@@ -2475,8 +2481,8 @@ fn ray_inside(
     penwidth: f64,
     p: PointF,
 ) -> bool {
-    if let Some(info) = info {
-        if let Some(verts) = info
+    if let Some(info) = info
+        && let Some(verts) = info
             .vertices
             .as_deref()
             .filter(|v| info.sides > 0 && v.len() % info.sides as usize == 0)
@@ -2485,7 +2491,6 @@ fn ray_inside(
             let ring_count = verts.len() / sides;
             return vertex_inside(sides, ring_count, verts, desc.fns == ShapeFns::Star, p);
         }
-    }
     if desc.fns == ShapeFns::Record {
         // records use compassPort with bp set — no ray search happens.
         let ext = penwidth / 2.0;
@@ -2791,6 +2796,7 @@ pub fn compass_port(
 
 /// [`compass_port`] with full rankdir control and optional cached shape
 /// info (used by the compass ray search for non-box shapes).
+#[allow(clippy::too_many_arguments)] // mirrors compass_port's parameters
 pub fn compass_port_rankdir(
     desc: &ShapeDesc,
     lw: f64,
@@ -3085,6 +3091,7 @@ fn build_rings(desc: &ShapeDesc, w: f64, h: f64, penwidth: f64) -> Vec<Vec<Point
 ///   outlines: [`special_shape_outline`].
 /// * Record/epsf return an empty vec — render from [`RecordLayout`] /
 ///   the node box.
+///
 /// `desc` with the computed `poly_init` geometry from `info` layered on —
 /// the descriptor a renderer or inside-test must consult whenever a node
 /// carries resolved shape info: `shape=polygon` has table `sides` 0, so

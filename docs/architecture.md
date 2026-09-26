@@ -46,7 +46,7 @@ src/
 │   └── geom.rs      points/boxes
 ├── viz/           visualization layer
 │   ├── dotview.rs   dot output → render model (world coords, colors, arrows)
-│   ├── layout/      RankDir/NodeBox vocabulary, lattice snapping, text measurement
+│   ├── layout/      RankDir/NodeBox vocabulary, text measurement
 │   ├── primitives.rs  rounded rects, circles, polygons, cubic flattening, text
 │   ├── transform.rs   world ↔ screen transform, adaptive grid spacing
 │   ├── interact.rs    pointer behavior (pan, zoom, drag, hover, selection)
@@ -54,7 +54,7 @@ src/
 │   ├── x11colors.rs   X11 color names
 │   └── mod.rs         the self-drawn GPUI Element
 ├── settings/      the settings model, generic card and app rows
-└── ui/            title bar chrome, tab strip (+ button), zoom cluster, status
+└── ui/            title bar shared with the tab strip (+ button), zoom cluster, status
                     bar, loading overlay (first load) and drop-target veil
 ```
 

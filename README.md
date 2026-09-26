@@ -18,16 +18,20 @@ machine.
   [docs/architecture.md](docs/architecture.md));
 - **Interactive viewer** — pan, cursor-anchored zoom, drag nodes with live
   edge re-routing, hover to inspect, fit to window, and a fullscreen mode
-  (`F11` or the title-bar button, `Esc` exits) that shows only the graph;
-- **Multiple documents at once** — every opened file gets its own tab with
-  independent pan/zoom/selection; switch with `Ctrl+Tab` / `Ctrl+Shift+Tab`,
-  close with `Ctrl+W`. Files open from the dialog (`Ctrl+O`), by dragging
+  (`F11` or the status bar's fullscreen toggle, `Esc` exits) that shows only the graph;
+- **Multiple documents at once** — every opened file gets its own tab in the
+  title bar, with independent pan/zoom/selection; pick one from the list at the far left,
+  cycle with `Ctrl+Tab` / `Ctrl+Shift+Tab`, close with `Ctrl+W`. Files open from the dialog (`Ctrl+O`), by dragging
   them onto the window, or by pasting a file path (`Ctrl+V` — the reliable
   route when running under WSLg, which does not forward cross-system file
   drags);
 - **Settings** — node/edge labels, background grid, natural scrolling,
   layout direction (TB↔LR) and label scale, from the status bar (the gear
-  on its left edge and the toggles beside it);
+  on its left edge and the toggles beside it). They are written to
+  `settings.json` under the platform's config directory —
+  `~/.config/dotv/` on Linux, `~/Library/Application Support/dotv/` on
+  macOS, `%APPDATA%\dotv\` on Windows — so they are still in force the
+  next time the viewer opens;
 - **Headless modes** — export the layout as JSON or SVG without a window;
 - **No runtime dependencies** — the font and every icon are compiled into
   the binary.
@@ -58,17 +62,18 @@ they run in scripts and CI.
 
 | Action | How |
 | --- | --- |
-| Open file | `Ctrl+O`, or pass a file on the command line |
-| Settings | Title-bar gear (node labels / edge labels / grid / natural scrolling / direction TB–LR / label scale) |
+| Open file | `Ctrl+O`, the `+` after the last tab, or pass a file on the command line |
+| Switch tabs | Click a tab in the title bar, or search/pick one from the tab list at its far left (`Ctrl+Shift+A`) — the panel lists every open file by name and path, and its rows close tabs too. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle. Every tab's ✕, `Ctrl+W`, or a middle click closes it; hovering a tab names the file's whole path |
+| Settings | Status-bar gear (natural scrolling / label scale), plus the toggles beside it (node labels / edge labels / grid / direction TB–LR) |
 | Zoom in / out | `Ctrl+=` / `Ctrl+-` |
 | Fit to window | `Ctrl+0`; also runs once after opening a file |
 | Clear selection | `Esc` |
 | Pan | Drag on empty space, or mouse wheel |
 | Zoom | `Ctrl`/`⌘` + wheel (anchored at the cursor), or the floating zoom cluster (+/−, fit, reset) |
 | Select node | Click a node (highlighted in the primary color) |
-| Move nodes | Drag a node; the drop position snaps to a lattice vertex and every edge touching it is re-routed live (arrows rebuilt). The undo button in the zoom cluster snaps everything back |
+| Move nodes | Drag a node; it follows the cursor freely (no snapping) and every edge touching it is re-routed live (arrows rebuilt). The undo button in the zoom cluster snaps everything back |
 | Inspect a node | Hover for a tooltip with the label, id and attributes |
-| Status bar | Node/edge counts, the selected node, and quick toggles (node labels, edge labels, grid, TB↔LR) |
+| Status bar | Node/edge counts, the selected node, and quick toggles (node labels, edge labels, grid, TB↔LR, fullscreen) |
 
 ## Supported DOT input
 

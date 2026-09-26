@@ -166,9 +166,9 @@ fn map_path(fg: &mut Fg, from: NId, to: NId, orig: EId, mut ve: EId, etype: Edge
     }
     if fg.edges[ve].count > 1 {
         fg.edges[orig].to_virt = None;
-        if fg.nodes[to].rank - fg.nodes[from].rank == 1 {
-            if let Some(e) = find_fast_edge(fg, from, to) {
-                if ports_eq(fg, orig, e) {
+        if fg.nodes[to].rank - fg.nodes[from].rank == 1
+            && let Some(e) = find_fast_edge(fg, from, to)
+                && ports_eq(fg, orig, e) {
                     merge_oneway(fg, orig, e);
                     if fg.nodes[from].node_type == NodeType::Normal
                         && fg.nodes[to].node_type == NodeType::Normal
@@ -177,8 +177,6 @@ fn map_path(fg: &mut Fg, from: NId, to: NId, orig: EId, mut ve: EId, etype: Edge
                     }
                     return;
                 }
-            }
-        }
         let mut u = from;
         let mut r = fg.nodes[from].rank;
         while r < fg.nodes[to].rank {
@@ -350,9 +348,7 @@ pub fn merge_ranks(fg: &mut Fg, subg: GId) {
         let src: Vec<NId> = fg.graphs[root].rank[root_slot].v.clone();
         {
             let row = &mut fg.graphs[subg].rank[slot];
-            for i in 0..d {
-                row.v[i] = src[ipos + i];
-            }
+            row.v[..d].copy_from_slice(&src[ipos..ipos + d]);
             row.n = d;
         }
         fg.graphs[subg].rank[slot].v.truncate(d + 1);

@@ -194,11 +194,10 @@ pub fn flat_edge(fg: &mut Fg, g: GId, e: EId) {
 /// `delete_flat_edge`.
 pub fn delete_flat_edge(fg: &mut Fg, e: EId) {
     let orig = fg.edges[e].to_orig;
-    if let Some(orig) = orig {
-        if fg.edges[orig].to_virt == Some(e) {
+    if let Some(orig) = orig
+        && fg.edges[orig].to_virt == Some(e) {
             fg.edges[orig].to_virt = None;
         }
-    }
     let (t, h) = (fg.edges[e].tail, fg.edges[e].head);
     zapinlist(&mut fg.nodes[t].flat_out, e);
     zapinlist(&mut fg.nodes[h].flat_in, e);
@@ -708,8 +707,8 @@ pub fn class2(fg: &mut Fg, g: GId) {
             }
 
             // merge multi-edges
-            if let Some(prev_e) = prev {
-                if fg.edges[e].tail == fg.edges[prev_e].tail
+            if let Some(prev_e) = prev
+                && fg.edges[e].tail == fg.edges[prev_e].tail
                     && fg.edges[e].head == fg.edges[prev_e].head
                 {
                     if fg.nodes[fg.edges[e].tail].rank == fg.nodes[fg.edges[e].head].rank {
@@ -731,7 +730,6 @@ pub fn class2(fg: &mut Fg, g: GId) {
                     }
                     // parallel edges with different labels fall through
                 }
-            }
 
             // self edges
             if fg.edges[e].tail == fg.edges[e].head {

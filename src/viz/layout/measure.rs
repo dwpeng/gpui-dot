@@ -63,7 +63,7 @@ pub fn measure_scaled(
     let family_owned = family.to_string();
     // The measurer outlives this call (it is stored in `Measured`), so it
     // owns its own cheap shaping wrapper around the shared font database.
-    let text_system = WindowTextSystem::new(std::sync::Arc::clone(&*text_system));
+    let text_system = WindowTextSystem::new(std::sync::Arc::clone(text_system));
     let measure = crate::dotgen::TextMeasure(std::rc::Rc::new(move |text: &str| {
         let (w, h) = text_extent(text, &text_system, &family_owned, DEFAULT_FONT_SIZE * scale);
         crate::dotgen::geom::PointF::new(w, h)

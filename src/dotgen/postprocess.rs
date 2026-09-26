@@ -119,7 +119,6 @@ pub fn gv_postprocess(fg: &mut Fg, allow_translation: bool) {
     // root graph label space (postproc.c:608-637)
     if let Some(label) = fg.graphs[0].label.as_ref() {
         let dimen = pad(label.dimen);
-        let flip = flip;
         let label_pos = fg.graphs[0].label_pos;
         let bb = fg.graphs[0].bb;
         let mut bb = bb;

@@ -2449,6 +2449,7 @@ dependencies = [
  "clap",
  "gpui-kit",
  "rust-embed",
+ "serde_json",
  "tikv-jemallocator",
 ]
 

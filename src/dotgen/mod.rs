@@ -14,6 +14,16 @@
 //! data model field for field so the algorithms can be transcribed
 //! verbatim. `docs/graphviz-specs/*.md` documents each C source file with
 //! line citations.
+//!
+//! # Lints
+//!
+//! The C sources are full of `for (i = 0; i < n; i++)` loops whose body
+//! indexes two or three parallel arrays, and the port keeps them that
+//! way: reading a module against its `.c` original is what keeps the
+//! corpus diff trustworthy, and an iterator rewrite would hide exactly
+//! the index arithmetic being verified. `needless_range_loop` argues
+//! for the opposite, so it is allowed for the whole engine.
+#![allow(clippy::needless_range_loop)]
 
 pub mod arrows;
 pub mod classes;
@@ -138,6 +148,7 @@ pub(crate) fn mapbool(value: Option<&String>) -> bool {
 /// The port text comes from the `:port` reference syntax or an explicit
 /// `tailport`/`headport` attribute (the parser already gives the attribute
 /// priority, mirroring cgraph).
+#[allow(clippy::too_many_arguments)] // mirrors chkPort's parameter list
 fn resolve_edge_port(
     fg: &mut Fg,
     graph: &Graph,
@@ -310,12 +321,11 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
         let mut xpenalty = 1;
         let tail_group = graph.nodes[input.tail].attrs.get("group").cloned();
         let head_group = graph.nodes[input.head].attrs.get("group").cloned();
-        if let (Some(tg), Some(hg)) = (&tail_group, &head_group) {
-            if !tg.is_empty() && tg == hg {
+        if let (Some(tg), Some(hg)) = (&tail_group, &head_group)
+            && !tg.is_empty() && tg == hg {
                 xpenalty = model::CL_CROSS;
                 weight *= 100;
             }
-        }
         // nonconstraint_edge: constraint attribute present and false
         let constraint_false = input
             .attrs
@@ -402,10 +412,10 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
     fg.input_out = vec![Vec::new(); n_real];
     fg.input_in = vec![Vec::new(); n_real];
     for (e, input) in graph.edges.iter().enumerate() {
-        if (input.tail as usize) < n_real {
+        if input.tail < n_real {
             fg.input_out[input.tail].push(e);
         }
-        if (input.head as usize) < n_real {
+        if input.head < n_real {
             fg.input_in[input.head].push(e);
         }
     }
@@ -807,7 +817,7 @@ fn to_layout(fg: &Fg, graph: &Graph) -> DotLayout {
         let label = d.label.and_then(|idx| {
             let raw = graph.edges[input].label().unwrap_or_default();
             let html = graph.edges[input].label_is_html();
-            label_out(Some(idx), edge_label_text(graph, input, &raw, html))
+            label_out(Some(idx), edge_label_text(graph, input, raw, html))
         });
         edges.push(EdgeOut {
             input,

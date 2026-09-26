@@ -10,7 +10,7 @@ use gpui_kit::{Hsla, SharedString};
 
 use crate::dotgen::{self, DotLayout, EdgeOut, LabelOut, NodeOut};
 use crate::graph::model::Graph;
-use crate::viz::layout::RankDir;
+use crate::viz::layout::{NodeBox, RankDir};
 
 /// A label ready to paint (world coordinates, y down).
 #[derive(Debug, Clone)]
@@ -145,6 +145,11 @@ pub struct ViewCluster {
 #[derive(Debug, Clone, Default)]
 pub struct DotView {
     pub nodes: Vec<ViewNode>,
+    /// `(x, y, w, h)` per node as laid out — the table
+    /// [`Self::boxes_with_offsets`] borrows while nothing has been
+    /// dragged. Kept next to `nodes` so the steady-state hit test, which
+    /// runs on every pointer move, allocates nothing.
+    node_boxes: Vec<NodeBox>,
     pub edges: Vec<ViewEdge>,
     pub clusters: Vec<ViewCluster>,
     /// `(min_x, min_y, max_x, max_y)` covering the drawing.
@@ -163,6 +168,15 @@ impl DotView {
             .nodes
             .iter()
             .map(|n| view_node(n, graph, map))
+            .collect();
+        let node_boxes: Vec<NodeBox> = nodes
+            .iter()
+            .map(|n| NodeBox {
+                x: n.x,
+                y: n.y,
+                w: n.w,
+                h: n.h,
+            })
             .collect();
         let edges: Vec<ViewEdge> = layout
             .edges
@@ -215,6 +229,7 @@ impl DotView {
         }
         Self {
             nodes,
+            node_boxes,
             edges,
             clusters,
             bounds,
@@ -223,15 +238,31 @@ impl DotView {
     }
 
     /// Node boxes with committed drag offsets applied.
-    pub fn boxes_with_offsets(&self, offsets: &[(f32, f32)]) -> Vec<(f32, f32, f32, f32)> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| {
-                let (dx, dy) = offsets.get(i).copied().unwrap_or((0.0, 0.0));
-                (n.x + dx, n.y + dy, n.w, n.h)
-            })
-            .collect()
+    ///
+    /// Borrows [`Self::node_boxes`] whenever no node carries a drag offset
+    /// — the steady state, and the one every pointer move hit-tests in —
+    /// so the common path allocates nothing; the owned rebuild is paid
+    /// only while a node is actually displaced. Same shape as
+    /// [`Self::edges_with_offsets`].
+    pub fn boxes_with_offsets(&self, offsets: &[(f32, f32)]) -> Cow<'_, [NodeBox]> {
+        if offsets.iter().all(|&(dx, dy)| dx == 0.0 && dy == 0.0) {
+            return Cow::Borrowed(&self.node_boxes);
+        }
+        Cow::Owned(
+            self.node_boxes
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    let (dx, dy) = offsets.get(i).copied().unwrap_or((0.0, 0.0));
+                    NodeBox {
+                        x: n.x + dx,
+                        y: n.y + dy,
+                        w: n.w,
+                        h: n.h,
+                    }
+                })
+                .collect(),
+        )
     }
 
     /// The edges as painted for this frame: each edge is either its routed
@@ -436,9 +467,13 @@ fn view_node(
     let shape = if record.is_some() && !style.invisible {
         // the record outline is its bounding rectangle
         NodeShape::Rect(vec![(x, y, w, h)])
-    } else if style.invisible {
-        NodeShape::None
-    } else if shape_name == "plaintext" || shape_name == "plain" || shape_name == "none" {
+    } else if style.invisible
+        || shape_name == "plaintext"
+        || shape_name == "plain"
+        || shape_name == "none"
+    {
+        // Nothing is painted: `style=invis`, or one of the shapes that
+        // are defined by having no outline at all.
         NodeShape::None
     } else if n.shape.sides <= 2 && shape_name != "point" && !n.shape.kind.is_empty() {
         // computed ellipse family (ellipse/circle/doublecircle/…; skewed or

@@ -1074,12 +1074,11 @@ fn dot_splines_(fg: &mut Fg, g: GId, normalize: bool) -> Result<(), i32> {
         };
         for nid in members {
             // if nid is the label vnode of a flat edge, copy its position
-            if let Some(fe) = nd_alg(fg, nid) {
-                if let Some(li) = fg.edges[fe].label {
+            if let Some(fe) = nd_alg(fg, nid)
+                && let Some(li) = fg.edges[fe].label {
                     let pos = fg.nodes[nid].coord;
                     fg.labels[li].pos = pos;
                 }
-            }
             if fg.nodes[nid].node_type != NodeType::Normal && !spline_merge(fg, nid) {
                 continue;
             }
@@ -1410,11 +1409,10 @@ fn make_regular_edge(
                 routesplines_(path, false)
             } else {
                 let mut r = routesplines_(path, true);
-                if let Some(pts) = r.as_mut() {
-                    if et == SplineType::Line && pts.len() > 4 {
+                if let Some(pts) = r.as_mut()
+                    && et == SplineType::Line && pts.len() > 4 {
                         straighten_line(pts);
                     }
-                }
                 r
             };
             match ps {
@@ -1470,11 +1468,10 @@ fn make_regular_edge(
             routesplines_(path, false)
         } else {
             let mut r = routesplines_(path, true);
-            if let Some(pts) = r.as_mut() {
-                if et == SplineType::Line && pts.len() > 4 {
+            if let Some(pts) = r.as_mut()
+                && et == SplineType::Line && pts.len() > 4 {
                     straighten_line(pts);
                 }
-            }
             r
         };
         match ps {
@@ -1498,7 +1495,7 @@ fn fan_out(
     sp: &SplineInfo,
     fe: EId,
     hn: NId,
-    pointfs: &mut Vec<PointF>,
+    pointfs: &mut [PointF],
     edges: &[EId],
 ) {
     let cnt = edges.len();
@@ -1511,7 +1508,7 @@ fn fan_out(
     for k in 1..pointfs.len().saturating_sub(1) {
         pointfs[k].x -= dx;
     }
-    let mut pts2 = pointfs.clone();
+    let mut pts2 = pointfs.to_vec();
     let sw = swap_ends_p(fg, fe);
     clip_and_install(fg, fe, hn, &mut pts2, sw, false);
     for &ej in edges.iter().skip(1) {
@@ -1523,7 +1520,7 @@ fn fan_out(
             pointfs[k].x += sp.multisep;
         }
         let head = fg.edges[e].head;
-        let mut pts2 = pointfs.clone();
+        let mut pts2 = pointfs.to_vec();
         let sw = swap_ends_p(fg, e);
         clip_and_install(fg, e, head, &mut pts2, sw, false);
     }
@@ -1540,32 +1537,28 @@ fn completeregularpath(
     last: EId,
     tendp: &PathEnd,
     hendp: &PathEnd,
-    boxes: &mut Vec<BoxF>,
+    boxes: &mut [BoxF],
 ) {
     let uleft = top_bound(fg, first, -1);
     let uright = top_bound(fg, first, 1);
-    if let Some(u) = uleft {
-        if !getsplinepoints(fg, u) {
+    if let Some(u) = uleft
+        && !getsplinepoints(fg, u) {
             return; // neighbor not routed yet
         }
-    }
-    if let Some(u) = uright {
-        if !getsplinepoints(fg, u) {
+    if let Some(u) = uright
+        && !getsplinepoints(fg, u) {
             return;
         }
-    }
     let lleft = bot_bound(fg, last, -1);
     let lright = bot_bound(fg, last, 1);
-    if let Some(u) = lleft {
-        if !getsplinepoints(fg, u) {
+    if let Some(u) = lleft
+        && !getsplinepoints(fg, u) {
             return;
         }
-    }
-    if let Some(u) = lright {
-        if !getsplinepoints(fg, u) {
+    if let Some(u) = lright
+        && !getsplinepoints(fg, u) {
             return;
         }
-    }
     for b in &tendp.boxes {
         add_box(path, *b);
     }
@@ -1678,11 +1671,8 @@ fn rank_box(fg: &Fg, g: GId, sp: &mut SplineInfo, r: i32) -> BoxF {
 fn straight_len(fg: &Fg, n: NId) -> i32 {
     let mut cnt = 0;
     let mut v = n;
-    loop {
-        match fg.nodes[v].out.first() {
-            Some(&e) => v = fg.edges[e].head,
-            None => break,
-        }
+    while let Some(&e) = fg.nodes[v].out.first() {
+        v = fg.edges[e].head;
         if fg.nodes[v].node_type != NodeType::Virtual {
             break;
         }
@@ -1890,11 +1880,10 @@ fn cl_bound(fg: &Fg, g: GId, n: NId, adj: NId) -> Option<GId> {
     };
     if fg.nodes[adj].node_type == NodeType::Normal {
         let cl = real_cluster(fg, g, adj);
-        if let Some(c) = cl {
-            if Some(c) != tcl && Some(c) != hcl {
+        if let Some(c) = cl
+            && Some(c) != tcl && Some(c) != hcl {
                 return Some(c);
             }
-        }
         return None;
     }
     // virtual adjacent: the tail-side then head-side cluster of its first
@@ -1906,11 +1895,10 @@ fn cl_bound(fg: &Fg, g: GId, n: NId, adj: NId) -> Option<GId> {
     if let Some(orig) = orig {
         for node in [fg.edges[orig].tail, fg.edges[orig].head] {
             let cl = real_cluster(fg, g, node);
-            if let Some(c) = cl {
-                if Some(c) != tcl && Some(c) != hcl && cl_vninside(fg, c, adj) {
+            if let Some(c) = cl
+                && Some(c) != tcl && Some(c) != hcl && cl_vninside(fg, c, adj) {
                     return Some(c);
                 }
-            }
         }
     }
     None
@@ -2030,8 +2018,8 @@ fn pathscross(fg: &Fg, n0: NId, n1: NId, ie1: Option<EId>, oe1: Option<EId>) -> 
         return false;
     }
     // walk up to 2 hops along out-edges comparing heads
-    if fg.nodes[n0].out.len() == 1 {
-        if let Some(mut e1) = oe1 {
+    if fg.nodes[n0].out.len() == 1
+        && let Some(mut e1) = oe1 {
             let mut e0 = fg.nodes[n0].out[0];
             for _ in 0..2 {
                 let na = fg.edges[e0].head;
@@ -2052,10 +2040,9 @@ fn pathscross(fg: &Fg, n0: NId, n1: NId, ie1: Option<EId>, oe1: Option<EId>) -> 
                 e1 = fg.nodes[nb].out[0];
             }
         }
-    }
     // same walk on in-edges comparing tails
-    if fg.nodes[n0].in_.len() == 1 {
-        if let Some(mut e1) = ie1 {
+    if fg.nodes[n0].in_.len() == 1
+        && let Some(mut e1) = ie1 {
             let mut e0 = fg.nodes[n0].in_[0];
             for _ in 0..2 {
                 let na = fg.edges[e0].tail;
@@ -2076,7 +2063,6 @@ fn pathscross(fg: &Fg, n0: NId, n1: NId, ie1: Option<EId>, oe1: Option<EId>) -> 
                 e1 = fg.nodes[nb].in_[0];
             }
         }
-    }
     false
 }
 
@@ -2885,11 +2871,10 @@ fn self_right(fg: &mut Fg, g: GId, edges: &[EId], stepx: f64, sizey: f64) {
         fg.edges[e0].tail_port.side as i32,
         fg.edges[e0].head_port.side as i32,
     );
-    if point_pair == 32 || point_pair == 65 {
-        if tp.y == hp.y {
+    if (point_pair == 32 || point_pair == 65)
+        && tp.y == hp.y {
             sgn = -sgn;
         }
-    }
     let mut tx = dx.min(3.0 * (np.x + dx - tp.x));
     let mut hx = dx.min(3.0 * (np.x + dx - hp.x));
     for &e in edges {
@@ -2943,11 +2928,10 @@ fn self_left(fg: &mut Fg, g: GId, edges: &[EId], stepx: f64, sizey: f64) {
         fg.edges[e0].tail_port.side as i32,
         fg.edges[e0].head_port.side as i32,
     );
-    if point_pair == 12 || point_pair == 67 {
-        if tp.y == hp.y {
+    if (point_pair == 12 || point_pair == 67)
+        && tp.y == hp.y {
             sgn = -sgn;
         }
-    }
     let mut tx = dx.min(3.0 * (tp.x + dx - np.x));
     let mut hx = dx.min(3.0 * (hp.x + dx - np.x));
     for &e in edges {
@@ -3563,9 +3547,11 @@ mod tests {
     #[test]
     fn portcmp_semantics() {
         let undef = Port::default();
-        let mut def = Port::default();
-        def.defined = true;
-        def.p = PointF::new(3.0, 4.0);
+        let def = Port {
+            defined: true,
+            p: PointF::new(3.0, 4.0),
+            ..Default::default()
+        };
         let mut def2 = def;
         def2.p.y = 5.0;
         assert_eq!(portcmp(&undef, &undef), 0);
@@ -3653,25 +3639,28 @@ mod debug_tmp {
         let mut sp = SplineInfo {
             splinesep: 18.0 / 4.0,
             multisep: 18.0,
-            ..Default::default()
+            left_bound: -32.0,
+            right_bound: 86.0,
+            rank_box: vec![BoxF::default(); 2],
         };
-        sp.left_bound = -32.0;
-        sp.right_bound = 86.0;
-        sp.rank_box = vec![BoxF::default(); 2];
         let mut path = Path::default();
-        let mut tend = PathEnd::default();
-        tend.nb = BoxF {
-            ll: PointF::new(-4.0, 18.0),
-            ur: PointF::new(86.0, 54.0),
+        let mut tend = PathEnd {
+            nb: BoxF {
+                ll: PointF::new(-4.0, 18.0),
+                ur: PointF::new(86.0, 54.0),
+            },
+            ..Default::default()
         };
         beginpath(&mut fg, 0, &mut path, ve, REGULAREDGE, &mut tend, false);
         println!("start.p = {:?}", path.start.p);
-        let rb = rank_box(&mut fg, 0, &mut sp, 0);
+        let rb = rank_box(&fg, 0, &mut sp, 0);
         println!("rank_box = {:?}", rb);
-        let mut hend = PathEnd::default();
-        hend.nb = BoxF {
-            ll: PointF::new(-4.0, -54.0),
-            ur: PointF::new(86.0, -18.0),
+        let mut hend = PathEnd {
+            nb: BoxF {
+                ll: PointF::new(-4.0, -54.0),
+                ur: PointF::new(86.0, -18.0),
+            },
+            ..Default::default()
         };
         endpath(&mut fg, 0, &mut path, ve, REGULAREDGE, &mut hend, false);
         println!("end.p = {:?}", path.end.p);

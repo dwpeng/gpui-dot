@@ -13,6 +13,7 @@ use gpui_kit::{
     Anchor, App, Context, InteractiveElement, IntoElement, ParentElement, Styled, Window, div, px,
 };
 
+use crate::actions::ToggleFullscreen;
 use crate::app::GraphView;
 use crate::icons::IconName;
 use crate::settings::SettingsCard;
@@ -50,7 +51,7 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
             .tooltip("Node labels")
             .on_click(move |checked, _window: &mut Window, cx: &mut App| {
                 let _ = weak.update(cx, |view, cx| {
-                    view.settings.show_node_labels = *checked;
+                    view.update_settings(|settings| settings.show_node_labels = *checked);
                     cx.notify();
                 });
             })
@@ -64,7 +65,7 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
             .tooltip("Edge labels")
             .on_click(move |checked, _window: &mut Window, cx: &mut App| {
                 let _ = weak.update(cx, |view, cx| {
-                    view.settings.show_edge_labels = *checked;
+                    view.update_settings(|settings| settings.show_edge_labels = *checked);
                     cx.notify();
                 });
             })
@@ -85,11 +86,12 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
             .tooltip("Layout direction")
             .on_click(move |_, _window: &mut Window, cx: &mut App| {
                 let _ = weak.update(cx, |view, cx| {
-                    view.settings.rank_dir = if view.settings.rank_dir == "LR" {
-                        "TB".into()
+                    let next = if view.settings.rank_dir == "LR" {
+                        "TB"
                     } else {
-                        "LR".into()
+                        "LR"
                     };
+                    view.update_settings(|settings| settings.rank_dir = next.into());
                     view.relayout_for_settings(cx);
                     cx.notify();
                 });
@@ -98,18 +100,32 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
 
     let grid_toggle = {
         let weak = weak.clone();
-        Toggle::new("status-edge-grid")
+        Toggle::new("status-grid")
             .icon(Icon::new(IconName::Grid))
             .checked(view.settings.show_grid)
             .xsmall()
             .tooltip("Show grid line")
             .on_click(move |checked, _window: &mut Window, cx: &mut App| {
                 let _ = weak.update(cx, |view, cx| {
-                    view.settings.show_grid = *checked;
+                    view.update_settings(|settings| settings.show_grid = *checked);
                     cx.notify();
                 });
             })
     };
+
+    // Fullscreen used to ride the title bar. It moved here when that row
+    // became the tab strip — which leaves the title bar as pure document
+    // chrome — and it belongs with the other view toggles anyway. The
+    // action is dispatched rather than handled locally, so this button,
+    // F11 and Esc all run the same viewer-state + platform-window path.
+    let fullscreen_toggle = Button::new("status-fullscreen")
+        .icon(Icon::new(IconName::Maximize))
+        .ghost()
+        .xsmall()
+        .tooltip("Fullscreen (F11)")
+        .on_click(|_, window: &mut Window, cx: &mut App| {
+            window.dispatch_action(Box::new(ToggleFullscreen), cx);
+        });
 
     // Counts and the selection read-out: the status bar is where the user
     // checks what is loaded and what a click selected. Both describe the
@@ -185,6 +201,7 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
                 .items_center()
                 .child(node_labels_toggle)
                 .child(edge_labels_toggle)
-                .child(grid_toggle),
+                .child(grid_toggle)
+                .child(fullscreen_toggle),
         )
 }

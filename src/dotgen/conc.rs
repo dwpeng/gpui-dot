@@ -23,9 +23,9 @@ const DOWN: i32 = 1;
 fn samedir(fg: &Fg, e: EId, f: EId) -> bool {
     let walk = |mut x: EId| -> Option<EId> {
         while fg.edges[x].edge_type != EdgeType::Normal {
-            match fg.edges[x].to_orig {
-                Some(o) => x = o,
-                None => return None,
+            {
+                let o = fg.edges[x].to_orig?;
+                x = o
             }
         }
         Some(x)
@@ -152,11 +152,10 @@ fn mergevirtual(fg: &mut Fg, g: GId, r: i32, lpos: usize, rpos: usize, dir: i32)
 fn infuse(fg: &mut Fg, g: GId, n: NId) {
     let r = fg.nodes[n].rank as usize;
     let lead = fg.graphs[g].rankleader.get(r).copied().flatten();
-    if lead.is_none() || fg.nodes[lead.unwrap()].order > fg.nodes[n].order {
-        if r < fg.graphs[g].rankleader.len() {
+    if (lead.is_none() || fg.nodes[lead.unwrap()].order > fg.nodes[n].order)
+        && r < fg.graphs[g].rankleader.len() {
             fg.graphs[g].rankleader[r] = Some(n);
         }
-    }
 }
 
 /// `rebuild_vlists` (conc.c:139-200) — re-derive each cluster's rank slice from
@@ -243,9 +242,7 @@ fn rebuild_vlists(fg: &mut Fg, g: GId) -> Result<(), i32> {
         {
             let slot = super::position::rank_row_index(fg, g, r);
             let row = &mut fg.graphs[g].rank[slot];
-            for i in 0..count {
-                row.v[i] = row_nodes[i];
-            }
+            row.v[..count].copy_from_slice(&row_nodes[..count]);
             row.n = count;
         }
         let slot = super::position::rank_row_index(fg, g, r);
@@ -268,7 +265,7 @@ pub fn dot_concentrate(fg: &mut Fg, g: GId) -> Result<(), i32> {
     let maxrank = fg.graphs[g].maxrank;
     // Downward pass: r is a candidate rank while the next rank has nodes.
     let mut r = 1;
-    while r + 1 <= maxrank + 1 {
+    while r < maxrank + 1 {
         let slot = super::position::rank_row_index(fg, g, r);
         let next = super::position::rank_row_index(fg, g, r + 1);
         if fg.graphs[g].rank.get(next).map(|row| row.n).unwrap_or(0) == 0 {

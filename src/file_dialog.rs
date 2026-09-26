@@ -63,7 +63,7 @@ pub fn pick_file(title: &str, start_dir: Option<&Path>) -> Result<Option<PathBuf
     if let Some(initial_dir) = &initial_dir {
         script.push_str(" $d.InitialDirectory = ");
         script.push_str(&ps_quote(initial_dir));
-        script.push_str(";");
+        script.push(';');
     }
     script.push_str(
         " if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) \
@@ -178,15 +178,14 @@ pub fn parse_pasted_paths(text: &str) -> Vec<PathBuf> {
 /// drive mounts and the `\\wsl.localhost\<distro>\...` share; the manual
 /// strip below covers runs where `wslpath` is missing or refuses the shape.
 fn to_linux_path(windows: &str) -> PathBuf {
-    if let Ok(output) = Command::new("wslpath").arg("-u").arg(windows).output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("wslpath").arg("-u").arg(windows).output()
+        && output.status.success() {
             let text = String::from_utf8_lossy(&output.stdout);
             let text = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
             if text.starts_with('/') {
                 return PathBuf::from(text);
             }
         }
-    }
     // `\\wsl.localhost\Debian\home\...` / `\\wsl$\Debian\home\...` → `/home/...`
     let normalized = windows.replace('\\', "/");
     let lower = normalized.to_ascii_lowercase();

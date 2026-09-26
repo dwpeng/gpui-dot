@@ -56,7 +56,17 @@ pub fn empty_state(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEl
             .content(
                 EmptyContent::new()
                     .child(open)
-                    .child(div().text_xs().text_color(theme.muted_foreground)),
+                    // The other two ways in. The pasted path matters most
+                    // under WSLg, whose RDP clipboard never forwards
+                    // cross-system file drags.
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(
+                                "Drag a file onto the window, or paste its path with Ctrl+V",
+                            ),
+                    ),
             ),
     )
 }

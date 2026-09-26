@@ -23,6 +23,8 @@ use rust_embed::RustEmbed;
 /// `+` and zoom-in are both `plus.svg`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, IntoElement)]
 pub enum IconName {
+    /// Open the list of tabs (`chevron-down.svg`).
+    ChevronDown,
     /// Close a tab (`close.svg`).
     CloseTab,
     /// Layout direction: left-to-right ranks (`align-center-horizontal.svg`).
@@ -31,6 +33,8 @@ pub enum IconName {
     DirectionVertical,
     /// Toggle edge labels (`baseline.svg`).
     EdgeLabels,
+    /// One open document, as listed in the tab list (`file.svg`).
+    File,
     /// Fit the graph to the window (`locate-fixed.svg`).
     FitView,
     /// Toggle the canvas grid (`layout-grid.svg`).
@@ -49,6 +53,8 @@ pub enum IconName {
     OpenFile,
     /// Reset manually moved nodes to their layout positions (`undo-2.svg`).
     ResetLayout,
+    /// The tab list's search field (`search.svg`).
+    Search,
     /// Open the settings card (`settings.svg`).
     Settings,
     /// Zoom in (`plus.svg`).
@@ -60,10 +66,12 @@ pub enum IconName {
 impl IconNamed for IconName {
     fn path(self) -> SharedString {
         match self {
+            IconName::ChevronDown => "icons/chevron-down.svg",
             IconName::CloseTab => "icons/close.svg",
             IconName::DirectionHorizontal => "icons/align-center-horizontal.svg",
             IconName::DirectionVertical => "icons/align-center-vertical.svg",
             IconName::EdgeLabels => "icons/baseline.svg",
+            IconName::File => "icons/file.svg",
             IconName::FitView => "icons/locate-fixed.svg",
             IconName::Grid => "icons/layout-grid.svg",
             IconName::LoaderCircle => "icons/loader-circle.svg",
@@ -72,6 +80,7 @@ impl IconNamed for IconName {
             IconName::NodeLabels => "icons/square-text.svg",
             IconName::OpenFile => "icons/file-up.svg",
             IconName::ResetLayout => "icons/undo-2.svg",
+            IconName::Search => "icons/search.svg",
             IconName::Settings => "icons/settings.svg",
             IconName::ZoomOut => "icons/minus.svg",
         }

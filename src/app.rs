@@ -4,39 +4,61 @@
 //! in [`crate::ui`], the settings in [`crate::settings`], the canvas in
 //! [`crate::viz`].
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::WindowTextSystem;
 use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::TitleBar;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, AsyncApp, Bounds, ClipboardEntry, Context, DragMoveEvent, ExternalPaths,
     FileDropEvent, FocusHandle, Focusable, InteractiveElement, IntoElement, PathPromptOptions,
-    Pixels, Point, Render, SharedString, Size, WeakEntity, Window, point, px,
+    Pixels, Point, Render, SharedString, Size, TestSupportExt as _, TitlebarOptions,
+    WeakEntity, Window, WindowBounds, WindowDecorations, WindowOptions, point, px,
 };
 
 use crate::actions::{
-    ClearSelection, CloseTab, FitGraph, NextTab, OpenGraph, PasteGraph, PrevTab, ToggleFullscreen,
-    ZoomIn, ZoomOut,
+    ClearSelection, CloseTab, FitGraph, NextTab, OpenGraph, PasteGraph, PrevTab, SearchTabs,
+    ToggleFullscreen, ZoomIn, ZoomOut,
 };
 use crate::document::{Document, LoadOutput, load_parts, relayout_graph};
 use crate::file_dialog::{self, parse_pasted_paths};
 use crate::graph::LoadError;
-use crate::settings::Settings;
+use crate::settings::{Settings, SettingsStore};
 use crate::ui::{
-    drop_overlay, empty_state, loading_overlay, status_bar, tab_bar, title_bar, zoom_cluster,
+    TabDrag, drop_overlay, empty_state, loading_overlay, status_bar, title_bar, zoom_cluster,
 };
 use crate::viz::GraphCanvas;
 use crate::viz::NodeDrag;
 use crate::viz::dotview::DotView;
 use crate::viz::layout::RankDir;
 
+/// The options every dotv window opens with: the client-decorated title bar the
+/// app draws itself, so the tab strip and the window's own controls share a row.
+/// `size` and `origin` are the window's, in screen coordinates.
+pub fn window_options(size: Size<Pixels>, origin: Point<Pixels>) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size })),
+        titlebar: Some(TitlebarOptions {
+            title: Some("dotv — DOT Graph Viewer".into()),
+            ..TitleBar::title_bar_options()
+        }),
+        window_decorations: Some(WindowDecorations::Client),
+        ..TitleBar::window_options()
+    }
+}
+
 /// One open file: its loaded snapshot plus the navigation state the canvas
 /// manipulates. Every field is per-tab, so switching tabs restores exactly
 /// where the user left that drawing.
+/// Cloned when a tab is detached: the clone shares the loaded document (it is
+/// behind an `Rc`) and copies the navigation state, so the receiving window can
+/// be built before this one gives the tab up.
+#[derive(Clone)]
 pub struct GraphTab {
     /// Stable identity for element ids and async loads (survives reordering).
     pub id: u64,
@@ -117,9 +139,16 @@ pub struct GraphView {
     /// A file-dialog failure shown on the empty canvas when no tab exists to
     /// carry it; cleared as soon as a file opens.
     pub(crate) dialog_error: Option<String>,
-    /// A load or re-layout failure queued for the centered alert dialog on
-    /// the next frame ([`PendingError`]).
-    pending_error: Option<PendingError>,
+    /// Load or re-layout failures queued for the centered alert dialog,
+    /// one dialog per frame ([`PendingError`]). A queue rather than a
+    /// slot: two failures landing in the same frame — a re-layout and a
+    /// load, say — must not overwrite each other.
+    pending_errors: VecDeque<PendingError>,
+    /// Whether the tab list's search popup is open. The popup is a controlled
+    /// [`gpui_kit::component::popover::Popover`], which owns the rendering;
+    /// this only remembers the state so the shortcut can open it and picking a
+    /// tab can close it.
+    pub(crate) tab_menu_open: bool,
     /// Whether files dragged from the desktop are currently over the window;
     /// shows the drop-target overlay over the canvas.
     file_drag_hover: bool,
@@ -136,35 +165,79 @@ pub struct GraphView {
     /// Bumped each time a fullscreen exit starts a restore, so a slow restore
     /// scheduled by an earlier toggle can never apply a stale size.
     fullscreen_restore_epoch: u64,
-    /// The viewer's settings, edited from the title-bar settings card and
-    /// shared by every tab.
+    /// The viewer's settings, edited from the status bar's settings card
+    /// and quick toggles, and shared by every tab.
     pub settings: Settings,
+    /// Where those settings are remembered between runs. `None` when the
+    /// platform has no config directory to put them in; the viewer then runs
+    /// on its defaults and writes nothing.
+    settings_store: Option<SettingsStore>,
+    /// Where the pointer was during the last tab drag, so a detached tab's
+    /// window can open under it. Written without notifying: only the drop that
+    /// ends the gesture reads it, and a repaint per pointer move would cost far
+    /// more than the position is worth.
+    tab_drag_position: Option<Point<Pixels>>,
     /// Owned focus handle so the root keeps keyboard focus (actions, keys).
     focus_handle: FocusHandle,
 }
 
 impl GraphView {
-    /// Creates the view and kicks off the load of `file` if one was given.
-    /// Initial keyboard focus is applied by the caller (which owns the window).
-    pub fn new(file: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+    /// Creates a view with no tabs, over `settings_store`: where it reads the
+    /// settings it starts from.
+    fn empty(settings_store: Option<SettingsStore>, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        let mut view = Self {
+        let settings = settings_store
+            .as_ref()
+            .map(SettingsStore::load)
+            .unwrap_or_default();
+        Self {
             tabs: Vec::new(),
             active: 0,
             next_tab_id: 0,
             canvas_bounds: None,
             dialog_error: None,
-            pending_error: None,
+            tab_menu_open: false,
+            pending_errors: VecDeque::new(),
             file_drag_hover: false,
             fullscreen: false,
             pre_fullscreen_size: None,
             fullscreen_restore_epoch: 0,
-            settings: Settings::default(),
+            tab_drag_position: None,
+            settings,
+            settings_store,
             focus_handle,
-        };
+        }
+    }
+
+    /// Creates a view over `settings_store` and kicks off the load of `file` if
+    /// one was given. Initial keyboard focus is applied by the caller (which owns
+    /// the window).
+    pub fn new(
+        file: Option<PathBuf>,
+        settings_store: Option<SettingsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut view = Self::empty(settings_store, cx);
         if let Some(path) = file {
             view.open_path_in_tab(path, cx);
         }
+        view
+    }
+
+    /// Creates a view whose only tab is `tab` — the receiving end of
+    /// [`Self::detach_tab`]. The tab arrives with its document, its pan, zoom and
+    /// selection, so a detached window opens exactly as the tab looked. Its id is
+    /// carried over, and the new view's id counter starts above it, so a file
+    /// opened here later cannot collide with the tab it was given.
+    pub fn with_tab(
+        tab: GraphTab,
+        settings_store: Option<SettingsStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let next_tab_id = tab.id + 1;
+        let mut view = Self::empty(settings_store, cx);
+        view.next_tab_id = next_tab_id;
+        view.tabs.push(tab);
         view
     }
 
@@ -227,6 +300,99 @@ impl GraphView {
         };
         self.tabs.remove(index);
         self.active = active_after_close(self.active, self.tabs.len() + 1, index);
+        // The tab that takes the closed one's slot was laid out under
+        // whatever settings were current back then, which need not be the
+        // current ones: re-apply them, exactly as `activate` does. Without
+        // this the drawing disagrees with the settings the toggles show.
+        self.relayout_for_settings(cx);
+        cx.notify();
+    }
+
+    /// Makes the open tab with `tab_id` visible, if it is still open. The
+    /// strip works by index; the tab-list dropdown holds ids, which survive
+    /// a tab being closed while its menu is open.
+    pub(crate) fn activate_tab_id(&mut self, tab_id: u64, cx: &mut Context<Self>) {
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) {
+            self.activate(index, cx);
+        }
+    }
+
+    /// Hands the tab with `tab_id` to a window of its own, opened where the drag
+    /// that asked for it left off.
+    ///
+    /// The document moves rather than reloading: a detach must not depend on the
+    /// file still being readable, and it must not re-run a layout. The tab is
+    /// cloned into the new window first and dropped from this one only once that
+    /// window exists, so a platform that refuses to open one leaves the tab where
+    /// it was rather than losing it.
+    pub(crate) fn detach_tab(&mut self, tab_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+        // A tab whose drawing has not arrived yet has nothing to hand over, and
+        // the load it is waiting for belongs to this view.
+        if self.tabs[index].document.is_none() {
+            return;
+        }
+
+        let window_bounds = window.bounds();
+        // Put the new window where the gesture ended, with the pointer over the
+        // slot its tab will take, rather than letting the compositor place it.
+        let origin = self
+            .tab_drag_position
+            .map(|pointer| window_bounds.origin + pointer - point(px(156.), px(17.)))
+            .unwrap_or(window_bounds.origin);
+
+        let detached = self.tabs[index].clone();
+        let settings_store = self.settings_store.clone();
+        let opened = cx.open_window(
+            window_options(window_bounds.size, origin),
+            move |window, cx| {
+                let view = cx.new(|cx| GraphView::with_tab(detached, settings_store, cx));
+                let focus_handle = view.focus_handle(cx);
+                window.focus(&focus_handle, cx);
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            },
+        );
+        if opened.is_err() {
+            eprintln!("dotv: could not open a window for the detached tab; it stays here");
+            return;
+        }
+
+        // The window is up: the tab belongs to it now.
+        self.tabs.remove(index);
+        self.active = active_after_close(self.active, self.tabs.len() + 1, index);
+        if self.tabs.is_empty() {
+            // Nothing left to show, and an empty window is only noise: this is
+            // what Chrome does when its last tab leaves for another window.
+            window.remove_window();
+        } else {
+            self.relayout_for_settings(cx);
+            cx.notify();
+        }
+    }
+
+    /// Moves the tab with `tab_id` into slot `to` of the strip.
+    ///
+    /// `active` is a position, so it has to be re-pointed at whatever tab it
+    /// named before the move: dragging a tab must never change which drawing is
+    /// on screen.
+    pub(crate) fn move_tab(&mut self, tab_id: u64, to: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let to = to.min(self.tabs.len().saturating_sub(1));
+        if from == to {
+            return;
+        }
+        let visible = self.active().map(|tab| tab.id);
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        if let Some(visible) = visible
+            && let Some(index) = self.tabs.iter().position(|tab| tab.id == visible)
+        {
+            self.active = index;
+        }
         cx.notify();
     }
 
@@ -253,12 +419,13 @@ impl GraphView {
         if window.is_fullscreen() != fullscreen {
             if fullscreen {
                 // Remember the pre-fullscreen size so the exit can restore it
-                // (see [`Self::restore_pre_fullscreen_size`]). Skipped when
-                // maximized: the compositor restores the maximize state and
-                // its geometry itself.
-                if !window.is_maximized() {
-                    self.pre_fullscreen_size = Some(window.bounds().size);
-                }
+                // (see [`Self::restore_pre_fullscreen_size`]). A maximized
+                // window stores `None` instead: the compositor restores the
+                // maximize state and its geometry itself, and leaving a
+                // value from an earlier session here would let a stale size
+                // win later.
+                self.pre_fullscreen_size =
+                    (!window.is_maximized()).then(|| window.bounds().size);
             }
             window.toggle_fullscreen();
             if !fullscreen {
@@ -376,12 +543,27 @@ impl GraphView {
                 // tab opened in the background keeps the current preference
                 // until it is activated.
                 if self.active == index {
-                    self.settings.rank_dir = match dir {
-                        RankDir::LR => "LR".into(),
-                        RankDir::TB => "TB".into(),
-                    };
+                    // The direction follows the file that was just opened, and is
+                    // remembered like any other setting. Leaving it out of the
+                    // store instead would make the stored direction nearly
+                    // meaningless: opening any file would overwrite the user's
+                    // pick in memory, and the next session would start from a
+                    // value nothing on screen ever showed. This way the toggle
+                    // reads the same at the start of a session as it did at the
+                    // end of the last one.
+                    self.update_settings(|settings| {
+                        settings.rank_dir = match dir {
+                            RankDir::LR => "LR".into(),
+                            RankDir::TB => "TB".into(),
+                        };
+                    });
+                    // Only the tab on screen follows the settings here; a
+                    // background tab keeps the base layout until it is
+                    // activated, which re-applies them (`activate`).
+                    // Re-laying out the *active* tab on a background
+                    // completion would touch the wrong document.
+                    self.relayout_for_settings(cx);
                 }
-                self.relayout_for_settings(cx);
             }
             Err(err) => {
                 let file = self.tabs[index].path.display().to_string();
@@ -395,7 +577,7 @@ impl GraphView {
                     }
                     LoadError::Io(_) => "Check that the file exists and is readable.",
                 };
-                self.pending_error = Some(PendingError {
+                self.pending_errors.push_back(PendingError {
                     title: format!(r#"Couldn’t open “{file}”"#),
                     description: format!("{err} {hint}"),
                 });
@@ -607,6 +789,38 @@ impl GraphView {
         self.set_zoom(zoom / 1.25, cx);
     }
 
+    /// Applies `change` to the settings and writes them out if it moved
+    /// anything.
+    ///
+    /// Every settings mutation goes through here — the status bar toggles, the
+    /// settings card, whatever is added next — so that "the viewer remembers
+    /// what you set" cannot be forgotten at one call site. `Settings` compares
+    /// by value, so a control that reports the value it already had does not
+    /// rewrite the file.
+    pub(crate) fn update_settings(&mut self, change: impl FnOnce(&mut Settings)) {
+        let before = self.settings.clone();
+        change(&mut self.settings);
+        if self.settings != before {
+            self.persist_settings();
+        }
+    }
+
+    /// Writes the settings out, or reports why it could not. A config
+    /// directory that is missing and cannot be created, or read-only, costs
+    /// the viewer its memory of the settings and nothing else — so the failure
+    /// is reported and otherwise swallowed rather than interrupting the user.
+    fn persist_settings(&self) {
+        let Some(store) = self.settings_store.as_ref() else {
+            return;
+        };
+        if let Err(err) = store.save(&self.settings) {
+            eprintln!(
+                "dotv: could not save settings to {}: {err}",
+                store.path().display()
+            );
+        }
+    }
+
     /// Applies the layout-affecting settings ("Direction", "Label scale") to
     /// the visible tab's document: re-measures the labels at the chosen
     /// scale and re-runs the layout in the chosen direction on the background
@@ -703,7 +917,7 @@ impl GraphView {
                 let file = self.tabs[index].path.display().to_string();
                 // The previous drawing stays on screen; the dialog says why
                 // the settings choice could not be applied.
-                self.pending_error = Some(PendingError {
+                self.pending_errors.push_back(PendingError {
                     title: format!(r#"Couldn’t lay out “{file}”"#),
                     description: format!("{err} The previous drawing is still shown."),
                 });
@@ -807,12 +1021,17 @@ impl Render for GraphView {
         // here, where the window is at hand — the async completions that
         // enqueue it cannot reach the window. Taking the entry keeps this a
         // one-shot side effect, so no notify loop can form.
-        if let Some(failure) = self.pending_error.take() {
+        if let Some(failure) = self.pending_errors.pop_front() {
             let title = SharedString::from(failure.title);
             let description = SharedString::from(failure.description);
             window.open_alert_dialog(cx, move |alert, _, _| {
                 alert.title(title.clone()).description(description.clone())
             });
+            // One dialog per frame, so make sure the frame that shows
+            // the rest of the queue actually arrives.
+            if !self.pending_errors.is_empty() {
+                cx.notify();
+            }
         }
         // On the first frame after a load, fit once the canvas has real bounds.
         if self.active().is_some_and(|tab| tab.fit_pending)
@@ -863,8 +1082,23 @@ impl Render for GraphView {
                 this.file_drag_hover = false;
                 this.handle_dropped_paths(paths, window, cx);
             }))
+            // A tab dragged out of the strip and let go anywhere else gets a
+            // window of its own — what dropping a tab on the page does in
+            // Chrome. The payload's own type keeps this apart from the file
+            // drop above, and the drag-move below only records where the
+            // pointer is, so the window opens where the gesture ended.
+            .on_drag_move(cx.listener(|this, event: &DragMoveEvent<TabDrag>, _, _| {
+                this.tab_drag_position = Some(event.event.position);
+            }))
+            .on_drop(cx.listener(|this, drag: &TabDrag, window, cx| {
+                this.detach_tab(drag.tab_id, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &OpenGraph, _window, cx| this.open_graph(cx)))
             .on_action(cx.listener(|this, _: &PasteGraph, window, cx| this.paste_graph(window, cx)))
+            .on_action(cx.listener(|this, _: &SearchTabs, _window, cx| {
+                this.tab_menu_open = true;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &ToggleFullscreen, window, cx| {
                 this.set_fullscreen(!this.fullscreen, window, cx)
             }))
@@ -895,10 +1129,11 @@ impl Render for GraphView {
                 }
             }))
             // Fullscreen shows the canvas alone; the chrome returns on Esc.
-            .when(!fullscreen, |app| app.child(title_bar(self, cx)))
-            // The strip offers the `+` only once a file is open; empty windows
-            // use the canvas' own open button instead.
-            .when(!fullscreen, |app| app.child(tab_bar(self, cx)))
+            // The title bar and the tab strip share this one row, so the
+            // strip no longer needs a row of its own above the canvas. The
+            // strip offers its `+` only once a file is open; an empty window
+            // uses the canvas' own open button instead.
+            .when(!fullscreen, |app| app.child(title_bar(self, window, cx)))
             .child(
                 div()
                     .id("dotv-canvas")
@@ -928,7 +1163,13 @@ impl Render for GraphView {
                     .when_some(loading_tab, |canvas, tab| {
                         canvas.child(loading_overlay(tab, cx))
                     })
-                    .child(zoom_cluster(self, cx))
+                    // The zoom controls only make sense with a drawing on
+                    // screen: in the empty state, and under the first-load
+                    // veil, they would sit on top of it — clickable, and
+                    // reading a zoom for a graph that is not there.
+                    .when(active.is_some_and(|tab| tab.document.is_some()), |canvas| {
+                        canvas.child(zoom_cluster(self, cx))
+                    })
                     .when(self.file_drag_hover, |canvas| {
                         canvas.child(drop_overlay(cx))
                     }),
@@ -937,6 +1178,9 @@ impl Render for GraphView {
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
+            // Registered so the UI tests can drop a dragged tab on the
+            // window itself: the drawing is the detach zone.
+            .test_support()
     }
 }
 
@@ -953,6 +1197,22 @@ mod tests {
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{AnyWindowHandle, Entity};
 
+    /// The scratch settings path a test's fixture name maps to. Nothing is
+    /// read or written here, so a test that wants to inspect what a viewer
+    /// wrote can ask for the same path without clearing it.
+    fn scratch_settings_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("dotv-settings-test-{name}.json"))
+    }
+
+    /// A settings file for one test, cleared first so a leftover from an
+    /// earlier run cannot change what the test starts from — and on a scratch
+    /// path, so no test ever reads or rewrites the real user's settings.
+    fn scratch_settings(name: &str) -> SettingsStore {
+        let path = scratch_settings_path(name);
+        let _ = std::fs::remove_file(&path);
+        SettingsStore::at(path)
+    }
+
     /// Opens a headless window over the production root view, loading
     /// `source` written to a fixture file.
     fn open_viewer(
@@ -965,7 +1225,9 @@ mod tests {
         cx.update(gpui_kit::init);
         let mut view = None;
         let window = cx.open_window(size(px(640.), px(480.)), |window, cx| {
-            let root = cx.new(|cx| GraphView::new(Some(path.clone()), cx));
+            let root = cx.new(|cx| {
+                GraphView::new(Some(path.clone()), Some(scratch_settings(name)), cx)
+            });
             view = Some(root.clone());
             Root::new(root, window, cx)
         });
@@ -1028,7 +1290,7 @@ mod tests {
 
         // Before the background load lands, the tab is loading: the
         // animation covers the canvas and nothing is reported.
-        cx.update_window(window.into(), |_, window, cx| {
+        cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             assert!(
                 window.try_find("dotv-loading-overlay").is_some(),
@@ -1040,7 +1302,7 @@ mod tests {
 
         // The layout lands: the animation ends and the drawing takes over.
         cx.run_until_parked();
-        cx.update_window(window.into(), |_, window, cx| {
+        cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             assert!(
                 window.try_find("dotv-loading-overlay").is_none(),
@@ -1065,7 +1327,7 @@ mod tests {
         // The load lands on the background executor; the failure then opens
         // the dialog on the next frame.
         cx.run_until_parked();
-        cx.update_window(window.into(), |_, window, cx| {
+        cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             assert!(
                 window.has_active_dialog(cx),
@@ -1092,6 +1354,379 @@ mod tests {
         });
     }
 
+    /// The tab strip shares the title bar's row, so a click on a control up
+    /// there must still reach that control: the strip's hitboxes block the
+    /// mouse deliberately, which keeps the title bar's caption/drag region
+    /// from claiming the press (see `ui::tab_bar`). A close button is the
+    /// sharpest probe — it is an ordinary button sitting inside a tab, and
+    /// whether it fires is directly observable in the tab count. Clicking
+    /// the one on an *idle* tab also pins that a background tab can be closed
+    /// without being switched to first.
+    #[gpui_kit::test]
+    fn a_tab_control_in_the_title_bar_receives_clicks(cx: &mut TestAppContext) {
+        let (view, window) =
+            open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-a.dot", cx);
+        cx.run_until_parked();
+
+        // A second file opens its own tab and takes over as the active one.
+        let second = std::env::temp_dir().join("dotv-ui-test-tab-b.dot");
+        std::fs::write(&second, "digraph { b -> c; }").expect("write the fixture");
+        cx.update(|cx| {
+            view.update(cx, |view, cx| view.open_path_in_tab(second, cx));
+        });
+        cx.run_until_parked();
+        let (idle, active) = cx.update(|cx| {
+            let view = view.read(cx);
+            let mut tabs = view.tabs();
+            let idle = tabs.next().expect("the first tab").id;
+            let active = tabs.next().expect("the second tab").id;
+            assert_eq!(view.active_index(), 1, "the opened tab is active");
+            (idle, active)
+        });
+
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("tab-close-{idle}")))
+                    .is_some(),
+                "an idle tab carries a close button too"
+            );
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("tab-close-{active}")))
+                    .is_some(),
+                "the active tab's close button is laid out in the title bar"
+            );
+            // Closing the idle one must close it without switching to it.
+            window.click(SharedString::from(format!("tab-close-{idle}")), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+
+        cx.update(|cx| {
+            let view = view.read(cx);
+            assert_eq!(view.tabs().count(), 1, "the close button closed its tab");
+            assert_eq!(
+                view.tabs().next().expect("the survivor").id,
+                active,
+                "the tab that was active is the one left"
+            );
+        });
+    }
+
+    /// Opens a window over two tabs whose titles differ wildly in length and
+    /// returns both tabs' rendered widths.
+    fn two_tab_widths(cx: &mut TestAppContext, window_width: f32, name: &str) -> (Pixels, Pixels) {
+        let short = std::env::temp_dir().join(format!("{name}-t.dot"));
+        let long = std::env::temp_dir().join(format!("{name}-a-very-long-graph-name.dot"));
+        std::fs::write(&short, "digraph { a -> b; }").expect("write the short fixture");
+        std::fs::write(&long, "digraph { b -> c; }").expect("write the long fixture");
+
+        let mut built = None;
+        let handle = cx.open_window(size(px(window_width), px(600.)), |window, cx| {
+            let root = cx.new(|cx| {
+                GraphView::new(Some(short.clone()), Some(scratch_settings(name)), cx)
+            });
+            built = Some(root.clone());
+            Root::new(root, window, cx)
+        });
+        let view = built.expect("the view is built");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            view.update(cx, |view, cx| view.open_path_in_tab(long.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        let (short_id, long_id) = cx.update(|cx| {
+            let mut tabs = view.read(cx).tabs();
+            let short_id = tabs.next().expect("the short tab").id;
+            let long_id = tabs.next().expect("the long tab").id;
+            (short_id, long_id)
+        });
+
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let width = |id: u64| {
+                window
+                    .find(SharedString::from(format!("dotv-tab-{id}")))
+                    .bounds()
+                    .size
+                    .width
+            };
+            (width(short_id), width(long_id))
+        })
+        .unwrap()
+    }
+
+    /// Tabs are sized to each other, not to their titles: a short file name and
+    /// a very long one lay out to the same width, and the long one truncates
+    /// instead of widening its tab. The width they agree on follows the window,
+    /// so a wide window gets wider tabs than a narrow one — up to the cap.
+    #[gpui_kit::test]
+    fn tabs_are_all_the_same_width(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+
+        let (wide_short, wide_long) = two_tab_widths(cx, 900.0, "uniform-wide");
+        assert_eq!(
+            wide_short, wide_long,
+            "a short title and a long one are laid out the same width"
+        );
+        assert_eq!(
+            wide_short,
+            px(240.),
+            "a wide window stops at the cap instead of stretching the tabs"
+        );
+
+        let (narrow_short, narrow_long) = two_tab_widths(cx, 400.0, "uniform-narrow");
+        assert_eq!(
+            narrow_short, narrow_long,
+            "the tabs are equal in a narrow window too"
+        );
+        assert!(
+            narrow_short < wide_short,
+            "a narrow window gets narrower tabs: {narrow_short:?} against {wide_short:?}"
+        );
+    }
+
+    /// Dragging a tab out of the strip and letting go over the drawing gives it
+    /// a window of its own, and the strip gives it up.
+    #[gpui_kit::test]
+    fn dragging_a_tab_out_detaches_it(cx: &mut TestAppContext) {
+        let (view, window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-detach.dot", cx);
+        cx.run_until_parked();
+        let second = std::env::temp_dir().join("dotv-ui-test-detach-b.dot");
+        std::fs::write(&second, "digraph { b -> c; }").expect("write the fixture");
+        cx.update(|cx| view.update(cx, |view, cx| view.open_path_in_tab(second, cx)));
+        cx.run_until_parked();
+
+        let (dragged, staying) = cx.update(|cx| {
+            let mut tabs = view.read(cx).tabs();
+            let dragged = tabs.next().expect("the first tab").id;
+            let staying = tabs.next().expect("the second tab").id;
+            (dragged, staying)
+        });
+        let windows_before = cx.windows().len();
+
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            // Let go over the drawing, away from every tab.
+            window.drag_to(
+                SharedString::from(format!("dotv-tab-{dragged}")),
+                "dotv-app",
+                cx,
+            );
+            window.render_frame(cx);
+        })
+        .unwrap();
+
+        assert_eq!(
+            cx.windows().len(),
+            windows_before + 1,
+            "the tab got a window of its own"
+        );
+        cx.update(|cx| {
+            let view = view.read(cx);
+            assert_eq!(view.tabs().count(), 1, "the strip gave the tab up");
+            assert_eq!(
+                view.tabs().next().expect("the survivor").id,
+                staying,
+                "the tab that stayed is the one that was not dragged"
+            );
+        });
+    }
+
+    /// Dragging a tab onto another's slot moves it there, and the drawing on
+    /// screen stays the drawing on screen: `active` is a position, so it has to
+    /// follow the tab it named.
+    #[gpui_kit::test]
+    fn dragging_a_tab_reorders_the_strip(cx: &mut TestAppContext) {
+        let (view, window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-reorder.dot", cx);
+        cx.run_until_parked();
+        for name in ["dotv-ui-test-reorder-b.dot", "dotv-ui-test-reorder-c.dot"] {
+            let path = std::env::temp_dir().join(name);
+            std::fs::write(&path, "digraph { b -> c; }").expect("write the fixture");
+            cx.update(|cx| view.update(cx, |view, cx| view.open_path_in_tab(path, cx)));
+            cx.run_until_parked();
+        }
+
+        let (first, second, visible) = cx.update(|cx| {
+            let tabs: Vec<u64> = view.read(cx).tabs().map(|tab| tab.id).collect();
+            assert_eq!(tabs.len(), 3, "three tabs are open");
+            assert_eq!(view.read(cx).active_index(), 2, "the last opened is visible");
+            (tabs[0], tabs[1], tabs[2])
+        });
+
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            // Drag the first tab onto the visible one's slot.
+            window.drag_to(
+                SharedString::from(format!("dotv-tab-{first}")),
+                SharedString::from(format!("dotv-tab-{visible}")),
+                cx,
+            );
+            window.render_frame(cx);
+        })
+        .unwrap();
+
+        cx.update(|cx| {
+            let view = view.read(cx);
+            let ids: Vec<u64> = view.tabs().map(|tab| tab.id).collect();
+            assert_eq!(
+                ids,
+                vec![second, visible, first],
+                "the dragged tab took the slot it was dropped on"
+            );
+            assert_eq!(
+                view.tabs().nth(view.active_index()).map(|tab| tab.id),
+                Some(visible),
+                "the tab that was visible is still the visible one"
+            );
+        });
+    }
+
+    /// The point of the store: a setting changed in one window is what the
+    /// next one starts from.
+    #[gpui_kit::test]
+    fn settings_survive_a_restart(cx: &mut TestAppContext) {
+        let (view, _window) =
+            open_viewer("digraph { a -> b; }", "dotv-ui-test-persist.dot", cx);
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                view.update_settings(|settings| settings.show_grid = false);
+                view.update_settings(|settings| settings.label_scale = 1.25);
+                cx.notify();
+            });
+        });
+
+        // The same path the viewer was pointed at — but not cleared, so the
+        // file it just wrote is still there to read.
+        let store = SettingsStore::at(scratch_settings_path("dotv-ui-test-persist.dot"));
+        let written = store.load();
+        assert!(!written.show_grid, "the change reached the file");
+        assert_eq!(written.label_scale, 1.25);
+
+        // A viewer built over that store starts from what was written.
+        let mut reopened = None;
+        cx.open_window(size(px(640.), px(480.)), |window, cx| {
+            let root = cx.new(|cx| GraphView::new(None, Some(store.clone()), cx));
+            reopened = Some(root.clone());
+            Root::new(root, window, cx)
+        });
+        cx.update(|cx| {
+            let settings = &reopened.expect("the second view is built").read(cx).settings;
+            assert!(!settings.show_grid, "the reopened viewer starts grid-less");
+            assert_eq!(settings.label_scale, 1.25);
+        });
+    }
+
+    /// Typing in the panel's field filters the list on the document's name
+    /// and its path.
+    #[gpui_kit::test]
+    fn the_tab_panel_filters_as_you_type(cx: &mut TestAppContext) {
+        let (view, window) =
+            open_viewer("digraph { a -> b; }", "dotv-ui-test-filter-a.dot", cx);
+        cx.run_until_parked();
+
+        let second = std::env::temp_dir().join("dotv-ui-test-filter-b.dot");
+        std::fs::write(&second, "digraph { b -> c; }").expect("write the fixture");
+        cx.update(|cx| {
+            view.update(cx, |view, cx| view.open_path_in_tab(second, cx));
+        });
+        cx.run_until_parked();
+        let first = cx.update(|cx| view.read(cx).tabs().next().expect("first tab").id);
+        let second_id = cx.update(|cx| {
+            let mut tabs = view.read(cx).tabs();
+            tabs.next();
+            tabs.next().expect("second tab").id
+        });
+
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("dotv-tab-list", cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("dotv-tab-row-{first}")))
+                    .is_some(),
+                "both tabs are listed to begin with"
+            );
+
+            window.click("dotv-tab-search-field", cx);
+            window.render_frame(cx);
+            window.input("-filter-b", cx);
+            window.render_frame(cx);
+
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("dotv-tab-row-{first}")))
+                    .is_none(),
+                "the query drops the tab whose path does not match"
+            );
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("dotv-tab-row-{second_id}")))
+                    .is_some(),
+                "the matching tab stays listed"
+            );
+        })
+        .unwrap();
+    }
+
+    /// The tab list at the far left of the strip opens the search panel, and
+    /// picking a row from it brings that tab forward and closes the panel. It
+    /// is the only control that opens a popover *inside* the title bar's
+    /// caption area, so it is worth pinning down.
+    #[gpui_kit::test]
+    fn the_tab_list_searches_and_switches_tabs(cx: &mut TestAppContext) {
+        let (view, window) =
+            open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-list.dot", cx);
+        cx.run_until_parked();
+
+        let second = std::env::temp_dir().join("dotv-ui-test-tab-list-b.dot");
+        std::fs::write(&second, "digraph { b -> c; }").expect("write the fixture");
+        cx.update(|cx| {
+            view.update(cx, |view, cx| view.open_path_in_tab(second, cx));
+        });
+        cx.run_until_parked();
+        let first = cx.update(|cx| view.read(cx).tabs().next().expect("first tab").id);
+
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("dotv-tab-menu-panel").is_none(),
+                "the panel starts closed"
+            );
+            window.click("dotv-tab-list", cx);
+            window.render_frame(cx);
+            assert!(
+                window.try_find("dotv-tab-menu-panel").is_some(),
+                "clicking the chevron opens the search panel"
+            );
+            window.click(SharedString::from(format!("dotv-tab-row-{first}")), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+
+        cx.update(|cx| {
+            assert_eq!(
+                view.read(cx).active_index(),
+                0,
+                "picking the row brought that tab forward"
+            );
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("dotv-tab-menu-panel").is_none(),
+                "picking a tab closes the panel"
+            );
+        })
+        .unwrap();
+    }
+
     /// A missing file reports through the dialog too (the I/O path), and the
     /// layout error path produces the same treatment for a graph the engine
     /// cannot draw.
@@ -1102,7 +1737,9 @@ mod tests {
 
         cx.update(gpui_kit::init);
         let handle = cx.open_window(size(px(640.), px(480.)), |window, cx| {
-            let view = cx.new(|cx| GraphView::new(Some(path.clone()), cx));
+            let view = cx.new(|cx| {
+                GraphView::new(Some(path.clone()), Some(scratch_settings("missing")), cx)
+            });
             Root::new(view, window, cx)
         });
 

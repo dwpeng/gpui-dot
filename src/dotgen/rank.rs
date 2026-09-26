@@ -222,9 +222,7 @@ pub(crate) fn dot_scan_ranks(fg: &mut Fg, g: GId) {
         if minrank > r {
             minrank = r;
         }
-        if leader.is_none() {
-            leader = Some(n);
-        } else if r < fg.nodes[leader.unwrap()].rank {
+        if leader.is_none_or(|l| r < fg.nodes[l].rank) {
             leader = Some(n);
         }
     }

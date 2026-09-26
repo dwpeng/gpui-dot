@@ -313,10 +313,10 @@ impl<'a> Lexer<'a> {
         let rest = rest.trim();
         let rest = rest.strip_prefix("line").unwrap_or(rest).trim_start();
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = digits.parse::<usize>() {
-            if n > 0 {
-                self.line = n - 1;
-            }
+        if let Ok(n) = digits.parse::<usize>()
+            && n > 0
+        {
+            self.line = n - 1;
         }
     }
 
@@ -803,10 +803,10 @@ impl Parser {
     /// `subgraph : optsubghdr body`
     fn subgraph(&mut self) -> Result<usize, DotError> {
         let mut name = None;
-        if self.eat_keyword(Kw::Subgraph) {
-            if matches!(self.peek(), Tok::Atom(..)) {
-                name = Some(self.atom()?.0);
-            }
+        if self.eat_keyword(Kw::Subgraph)
+            && matches!(self.peek(), Tok::Atom(..))
+        {
+            name = Some(self.atom()?.0);
         }
         self.expect_char('{')?;
         let parent = self.frames.last().unwrap().g;

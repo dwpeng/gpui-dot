@@ -730,6 +730,10 @@ fn sample_ellipse(cx: f32, cy: f32, rx: f32, ry: f32, tolerance: f32) -> Vec<(f3
         let a = std::f32::consts::TAU * t;
         (cx + rx * a.cos(), cy + ry * a.sin())
     }
+    // Nine geometric parameters, every one of them distinct per
+    // recursion level; bundling them into a struct would only add
+    // indirection to a hot inner loop.
+    #[allow(clippy::too_many_arguments)]
     fn subdivide(
         out: &mut Vec<(f32, f32)>,
         cx: f32,

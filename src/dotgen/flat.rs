@@ -474,11 +474,10 @@ pub fn edge_dist(fg: &Fg, e: EId, flip: bool) -> f64 {
             continue;
         }
         // flat.c:318-321 — labeled + adjacent equivalents widen the max
-        if let Some(lw) = label_width(f) {
-            if fg.edges[f].adjacent {
+        if let Some(lw) = label_width(f)
+            && fg.edges[f].adjacent {
                 dist = dist.max(lw);
             }
-        }
     }
     dist
 }

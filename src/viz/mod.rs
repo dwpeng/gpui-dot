@@ -188,6 +188,13 @@ impl Element for GraphCanvas {
     ) -> Self::PrepaintState {
         // Report the canvas size back to the view, which uses it to fit the
         // graph to the window. Idempotent per frame; ignores a dead view.
+        //
+        // This runs *after* the owner's `render`, and deliberately does not
+        // notify. A fit asked for before the first prepaint (a tab opened
+        // with `fit_pending`) therefore lands on the next frame — which the
+        // load completion's own `cx.notify` guarantees, so nothing is
+        // missed today. Any new path that needs the fit on the very first
+        // frame must request that frame itself.
         let _ = self
             .view
             .update(cx, |view, _| view.canvas_bounds = Some(bounds));
@@ -216,26 +223,19 @@ impl Element for GraphCanvas {
 
         // Element-local interaction state from previous dispatches: the node
         // under the cursor (if any), the cursor position for the tooltip and
-        // whether a pan drag is in progress. A node drag is view state.
-        let (hovered, mouse, dragging) = global_id
+        // whether a pan drag is in progress. A node drag is view state. Read
+        // once here, and reused below where the handlers are registered.
+        let cells = global_id
             .map(|id| {
-                window.with_element_state::<CanvasCells, (Option<usize>, Option<Point<Pixels>>, bool)>(
-                    id,
-                    |prev, _| {
-                        let cells = prev.unwrap_or_default();
-                        (
-                            (
-                                cells.hovered.get(),
-                                cells.mouse.get(),
-                                cells.drag.get().is_some(),
-                            ),
-                            cells,
-                        )
-                    },
-                )
+                window.with_element_state::<CanvasCells, CanvasCells>(id, |prev, _| {
+                    let cells = prev.unwrap_or_default();
+                    (cells.clone(), cells)
+                })
             })
-            .unwrap_or((None, None, false));
-        let dragging = dragging || self.node_drag.is_some();
+            .unwrap_or_default();
+        let hovered = cells.hovered.get();
+        let mouse = cells.mouse.get();
+        let dragging = cells.drag.get().is_some() || self.node_drag.is_some();
 
         // Cursor styles can only be registered during paint in this gpui
         // version; the window applies the hovered hitbox's request after the
@@ -296,15 +296,12 @@ impl Element for GraphCanvas {
             }
         });
 
-        // Pointer behavior: wheel zoom/pan, node drag, empty-space pan, hover.
-        let Some(cells) = global_id.map(|id| {
-            window.with_element_state::<CanvasCells, CanvasCells>(id, |prev, _| {
-                let cells = prev.unwrap_or_default();
-                (cells.clone(), cells)
-            })
-        }) else {
+        // Pointer behavior: wheel zoom/pan, node drag, empty-space pan,
+        // hover. Handlers can only be registered during paint, and they
+        // need a global element id to hang off.
+        if global_id.is_none() {
             return;
-        };
+        }
         interact::register(
             interact::Interaction {
                 hitbox: &hitbox,

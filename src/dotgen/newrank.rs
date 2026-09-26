@@ -211,23 +211,21 @@ fn compile_samerank(fg: &mut Fg, ug: GId, parent_clust: Option<GId>) {
     match rankset_kind(fg, ug) {
         RankType::SourceRank | RankType::MinRank => {
             let members = fg.graphs[ug].nodes_order.clone();
-            if let Some(leader) = union_all(fg, &members) {
-                if let Some(cl) = clust {
+            if let Some(leader) = union_all(fg, &members)
+                && let Some(cl) = clust {
                     let rep = fg.graphs[cl].minrep;
                     let r = union_one(fg, leader, rep);
                     fg.graphs[cl].minrep = Some(r);
                 }
-            }
         }
         RankType::SinkRank | RankType::MaxRank => {
             let members = fg.graphs[ug].nodes_order.clone();
-            if let Some(leader) = union_all(fg, &members) {
-                if let Some(cl) = clust {
+            if let Some(leader) = union_all(fg, &members)
+                && let Some(cl) = clust {
                     let rep = fg.graphs[cl].maxrep;
                     let r = union_one(fg, leader, rep);
                     fg.graphs[cl].maxrep = Some(r);
                 }
-            }
         }
         RankType::SameRank => {
             let members = fg.graphs[ug].nodes_order.clone();
@@ -237,17 +235,15 @@ fn compile_samerank(fg: &mut Fg, ug: GId, parent_clust: Option<GId>) {
     }
 
     // a cluster may become degenerate
-    if is_clust {
-        if let Some(minrep) = fg.graphs[ug].minrep {
-            if Some(minrep) == fg.graphs[ug].maxrep {
+    if is_clust
+        && let Some(minrep) = fg.graphs[ug].minrep
+            && Some(minrep) == fg.graphs[ug].maxrep {
                 let members = fg.graphs[ug].nodes_order.clone();
                 if let Some(up) = union_all(fg, &members) {
                     fg.graphs[ug].minrep = Some(up);
                     fg.graphs[ug].maxrep = Some(up);
                 }
             }
-        }
-    }
 }
 
 /// `dot_lca` — lowest common ancestor of two clusters.
@@ -312,11 +308,10 @@ fn strong(fg: &mut Fg, t: NId, h: NId, orig: EId) {
 fn weak(fg: &mut Fg, xg: &mut Xg, t: NId, h: NId, orig: EId) {
     for e in fg.nodes[t].in_.clone() {
         let v = fg.edges[e].tail;
-        if let Some(f) = fg.nodes[v].out.first().copied() {
-            if fg.edges[f].head == h {
+        if let Some(f) = fg.nodes[v].out.first().copied()
+            && fg.edges[f].head == h {
                 return;
             }
-        }
     }
     let name = format!("_weak_{}", xg.weak_id);
     xg.weak_id += 1;

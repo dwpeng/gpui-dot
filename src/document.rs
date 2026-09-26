@@ -3,6 +3,7 @@
 //! Shared (via [`Rc`]) between the view state and the canvas element, so a
 //! snapshot is cheap to clone and rebuild every render.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -48,18 +49,13 @@ impl Document {
 
     /// The laid-out node boxes with every committed drag offset applied — the
     /// boxes the canvas paints and hit-tests against.
-    pub fn effective_boxes(&self) -> Vec<NodeBox> {
+    pub fn effective_boxes(&self) -> Cow<'_, [NodeBox]> {
         self.effective_boxes_with(&self.offsets)
     }
 
-    /// [`Self::effective_boxes`] with an explicit offset table — paint passes
-    /// [`Self::offsets_with_live_drag`] here while a node is being dragged.
-    pub fn effective_boxes_with(&self, offsets: &[(f32, f32)]) -> Vec<NodeBox> {
-        self.view
-            .boxes_with_offsets(offsets)
-            .into_iter()
-            .map(|(x, y, w, h)| NodeBox { x, y, w, h })
-            .collect()
+    /// [`Self::effective_boxes`] with an explicit offset table.
+    pub fn effective_boxes_with(&self, offsets: &[(f32, f32)]) -> Cow<'_, [NodeBox]> {
+        self.view.boxes_with_offsets(offsets)
     }
 
     /// The tight world box covering the laid-out drawing plus drag offsets —
@@ -1003,7 +999,7 @@ mod tests {
     fn arrow_tip_lands_on_the_node_border() {
         let document = document("digraph { a -> b; }");
         let b = &document.view.nodes[1];
-        let (cx, cy) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
+        let cx = b.x + b.w / 2.0;
         let edge = &document.view.edges[0];
         assert!(edge.eflag != 0, "edge should carry a head arrow");
 
@@ -1045,7 +1041,6 @@ mod tests {
             "line end {end:?} stopped too far from the border (y = {})",
             b.y
         );
-        let _ = cy;
     }
 
     #[test]
