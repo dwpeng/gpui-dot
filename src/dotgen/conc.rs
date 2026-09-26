@@ -153,9 +153,10 @@ fn infuse(fg: &mut Fg, g: GId, n: NId) {
     let r = fg.nodes[n].rank as usize;
     let lead = fg.graphs[g].rankleader.get(r).copied().flatten();
     if (lead.is_none() || fg.nodes[lead.unwrap()].order > fg.nodes[n].order)
-        && r < fg.graphs[g].rankleader.len() {
-            fg.graphs[g].rankleader[r] = Some(n);
-        }
+        && r < fg.graphs[g].rankleader.len()
+    {
+        fg.graphs[g].rankleader[r] = Some(n);
+    }
 }
 
 /// `rebuild_vlists` (conc.c:139-200) — re-derive each cluster's rank slice from

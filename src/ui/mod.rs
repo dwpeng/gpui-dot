@@ -1,6 +1,7 @@
 //! The application chrome around the canvas: the title bar, which shares
-//! its one row with the tab strip, the floating zoom controls and the
-//! status bar. Pure view builders over the owning
+//! its one row with the tab strip, and the status bar, which carries the
+//! zoom controls beside the settings button. Pure view builders over the
+//! owning
 //! [`GraphView`](crate::app::GraphView) — no state of their own.
 
 mod drop_overlay;
@@ -18,4 +19,5 @@ pub use status_bar::status_bar;
 pub(crate) use tab_bar::TabDrag;
 pub use tab_bar::tab_bar;
 pub use title_bar::title_bar;
+pub use zoom_cluster::floating_zoom_cluster;
 pub use zoom_cluster::zoom_cluster;

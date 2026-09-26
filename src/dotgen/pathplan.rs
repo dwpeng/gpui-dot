@@ -269,7 +269,7 @@ fn isdiagonal(i: usize, ip2: usize, pts: &[usize], pnls: &[Pnl]) -> bool {
     let ip1 = (i + 1) % n;
     let im1 = (i + n - 1) % n;
     let p = |k: usize| pnls[pts[k]].pp;
-    
+
     let res = if ccw(p(im1), p(i), p(ip1)) == ISCCW {
         ccw(p(i), p(ip2), p(im1)) == ISCCW && ccw(p(ip2), p(i), p(ip1)) == ISCCW
     } else {
@@ -280,10 +280,10 @@ fn isdiagonal(i: usize, ip2: usize, pts: &[usize], pnls: &[Pnl]) -> bool {
     }
     for j in 0..n {
         let jp1 = (j + 1) % n;
-        if !(j == i || jp1 == i || j == ip2 || jp1 == ip2)
-            && intersects(p(i), p(ip2), p(j), p(jp1)) {
-                return false;
-            }
+        if !(j == i || jp1 == i || j == ip2 || jp1 == ip2) && intersects(p(i), p(ip2), p(j), p(jp1))
+        {
+            return false;
+        }
     }
     true
 }

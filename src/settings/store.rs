@@ -76,8 +76,11 @@ fn config_dir() -> Option<PathBuf> {
         return non_empty(std::env::var_os("APPDATA")).map(PathBuf::from);
     }
     if cfg!(target_os = "macos") {
-        return non_empty(std::env::var_os("HOME"))
-            .map(|home| PathBuf::from(home).join("Library").join("Application Support"));
+        return non_empty(std::env::var_os("HOME")).map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+        });
     }
     // The XDG base-directory spec: an absolute `XDG_CONFIG_HOME` wins, and a
     // relative one is to be ignored rather than resolved against the working
@@ -118,14 +121,20 @@ mod tests {
         let path = dir.join("nested").join("settings.json");
         let _ = fs::remove_dir_all(&dir);
         let store = SettingsStore::at(&path);
-        assert_eq!(store.load(), Settings::default(), "an absent file is default");
+        assert_eq!(
+            store.load(),
+            Settings::default(),
+            "an absent file is default"
+        );
 
         let settings = Settings {
             show_grid: false,
             label_scale: 1.4,
             ..Settings::default()
         };
-        store.save(&settings).expect("the write creates the directory");
+        store
+            .save(&settings)
+            .expect("the write creates the directory");
         assert_eq!(store.load(), settings);
         assert!(
             !path.with_extension("json.tmp").exists(),

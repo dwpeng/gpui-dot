@@ -436,15 +436,17 @@ fn make_lr_constraints(fg: &mut Fg, g: GId) -> Result<(), i32> {
                 // position.c:285-290 — guards because "flat edges work very
                 // poorly with cluster layout"
                 if !canreach(fg, t0, h0)
-                    && make_aux_edge(fg, h0, t0, m1, fg.edges[e].weight).is_none() {
-                        return Err(-1);
-                    }
+                    && make_aux_edge(fg, h0, t0, m1, fg.edges[e].weight).is_none()
+                {
+                    return Err(-1);
+                }
                 let (t1, h1) = (fg.edges[e1].tail, fg.edges[e1].head);
                 let m1 = m0 as f64 + fg.nodes[t1].rw + fg.nodes[h1].lw; // position.c:291
                 if !canreach(fg, h1, t1)
-                    && make_aux_edge(fg, t1, h1, m1, fg.edges[e].weight).is_none() {
-                        return Err(-1);
-                    }
+                    && make_aux_edge(fg, t1, h1, m1, fg.edges[e].weight).is_none()
+                {
+                    return Err(-1);
+                }
             }
 
             // position.c:299-332 — position flat edge endpoints
@@ -763,7 +765,7 @@ fn adjust_simple(fg: &mut Fg, g: GId, delta: f64, margin_total: i32) {
     let bottom = (delta + 1.0) / 2.0; // position.c:630
     let delbottom =
         fg.graphs[g].ht1 + bottom - (rank_row(fg, root, maxr).ht1 - margin_total as f64);
-    
+
     let deltop = if delbottom > 0.0 {
         let mut r = maxr;
         while r >= minr {
@@ -777,8 +779,7 @@ fn adjust_simple(fg: &mut Fg, g: GId, delta: f64, margin_total: i32) {
         fg.graphs[g].ht2 + (delta - bottom) + delbottom
             - (rank_row(fg, root, minr).ht2 - margin_total as f64)
     } else {
-        fg.graphs[g].ht2 + (delta - bottom)
-            - (rank_row(fg, root, minr).ht2 - margin_total as f64)
+        fg.graphs[g].ht2 + (delta - bottom) - (rank_row(fg, root, minr).ht2 - margin_total as f64)
     };
     if deltop > 0.0 {
         let minroot = fg.graphs[root].minrank;
@@ -899,9 +900,10 @@ fn set_ycoords(fg: &mut Fg, g: GId, state: &PosState) {
             if !fg.nodes[n].other.is_empty() {
                 for &e in &fg.nodes[n].other {
                     if fg.edges[e].tail == fg.edges[e].head
-                        && let Some(l) = fg.edges[e].label {
-                            ht2 = ht2.max(fg.labels[l].dimen.y / 2.0);
-                        }
+                        && let Some(l) = fg.edges[e].label
+                    {
+                        ht2 = ht2.max(fg.labels[l].dimen.y / 2.0);
+                    }
                 }
             }
             // update global rank ht (L781-784). `pht1/pht2` track the

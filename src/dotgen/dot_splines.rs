@@ -1075,10 +1075,11 @@ fn dot_splines_(fg: &mut Fg, g: GId, normalize: bool) -> Result<(), i32> {
         for nid in members {
             // if nid is the label vnode of a flat edge, copy its position
             if let Some(fe) = nd_alg(fg, nid)
-                && let Some(li) = fg.edges[fe].label {
-                    let pos = fg.nodes[nid].coord;
-                    fg.labels[li].pos = pos;
-                }
+                && let Some(li) = fg.edges[fe].label
+            {
+                let pos = fg.nodes[nid].coord;
+                fg.labels[li].pos = pos;
+            }
             if fg.nodes[nid].node_type != NodeType::Normal && !spline_merge(fg, nid) {
                 continue;
             }
@@ -1410,9 +1411,11 @@ fn make_regular_edge(
             } else {
                 let mut r = routesplines_(path, true);
                 if let Some(pts) = r.as_mut()
-                    && et == SplineType::Line && pts.len() > 4 {
-                        straighten_line(pts);
-                    }
+                    && et == SplineType::Line
+                    && pts.len() > 4
+                {
+                    straighten_line(pts);
+                }
                 r
             };
             match ps {
@@ -1469,9 +1472,11 @@ fn make_regular_edge(
         } else {
             let mut r = routesplines_(path, true);
             if let Some(pts) = r.as_mut()
-                && et == SplineType::Line && pts.len() > 4 {
-                    straighten_line(pts);
-                }
+                && et == SplineType::Line
+                && pts.len() > 4
+            {
+                straighten_line(pts);
+            }
             r
         };
         match ps {
@@ -1490,14 +1495,7 @@ fn make_regular_edge(
 /// dotsplines.c:1892-1914 — duplicate the routed points once per group
 /// member, stepping interior control points one `Multisep` to the right per
 /// edge (endpoints are NOT shifted).
-fn fan_out(
-    fg: &mut Fg,
-    sp: &SplineInfo,
-    fe: EId,
-    hn: NId,
-    pointfs: &mut [PointF],
-    edges: &[EId],
-) {
+fn fan_out(fg: &mut Fg, sp: &SplineInfo, fe: EId, hn: NId, pointfs: &mut [PointF], edges: &[EId]) {
     let cnt = edges.len();
     if cnt == 1 {
         let sw = swap_ends_p(fg, fe);
@@ -1542,23 +1540,27 @@ fn completeregularpath(
     let uleft = top_bound(fg, first, -1);
     let uright = top_bound(fg, first, 1);
     if let Some(u) = uleft
-        && !getsplinepoints(fg, u) {
-            return; // neighbor not routed yet
-        }
+        && !getsplinepoints(fg, u)
+    {
+        return; // neighbor not routed yet
+    }
     if let Some(u) = uright
-        && !getsplinepoints(fg, u) {
-            return;
-        }
+        && !getsplinepoints(fg, u)
+    {
+        return;
+    }
     let lleft = bot_bound(fg, last, -1);
     let lright = bot_bound(fg, last, 1);
     if let Some(u) = lleft
-        && !getsplinepoints(fg, u) {
-            return;
-        }
+        && !getsplinepoints(fg, u)
+    {
+        return;
+    }
     if let Some(u) = lright
-        && !getsplinepoints(fg, u) {
-            return;
-        }
+        && !getsplinepoints(fg, u)
+    {
+        return;
+    }
     for b in &tendp.boxes {
         add_box(path, *b);
     }
@@ -1881,9 +1883,11 @@ fn cl_bound(fg: &Fg, g: GId, n: NId, adj: NId) -> Option<GId> {
     if fg.nodes[adj].node_type == NodeType::Normal {
         let cl = real_cluster(fg, g, adj);
         if let Some(c) = cl
-            && Some(c) != tcl && Some(c) != hcl {
-                return Some(c);
-            }
+            && Some(c) != tcl
+            && Some(c) != hcl
+        {
+            return Some(c);
+        }
         return None;
     }
     // virtual adjacent: the tail-side then head-side cluster of its first
@@ -1896,9 +1900,12 @@ fn cl_bound(fg: &Fg, g: GId, n: NId, adj: NId) -> Option<GId> {
         for node in [fg.edges[orig].tail, fg.edges[orig].head] {
             let cl = real_cluster(fg, g, node);
             if let Some(c) = cl
-                && Some(c) != tcl && Some(c) != hcl && cl_vninside(fg, c, adj) {
-                    return Some(c);
-                }
+                && Some(c) != tcl
+                && Some(c) != hcl
+                && cl_vninside(fg, c, adj)
+            {
+                return Some(c);
+            }
         }
     }
     None
@@ -2019,50 +2026,52 @@ fn pathscross(fg: &Fg, n0: NId, n1: NId, ie1: Option<EId>, oe1: Option<EId>) -> 
     }
     // walk up to 2 hops along out-edges comparing heads
     if fg.nodes[n0].out.len() == 1
-        && let Some(mut e1) = oe1 {
-            let mut e0 = fg.nodes[n0].out[0];
-            for _ in 0..2 {
-                let na = fg.edges[e0].head;
-                let nb = fg.edges[e1].head;
-                if na == nb {
-                    break;
-                }
-                if order != (fg.nodes[na].order > fg.nodes[nb].order) {
-                    return true;
-                }
-                if fg.nodes[na].out.len() != 1 || fg.nodes[na].node_type == NodeType::Normal {
-                    break;
-                }
-                e0 = fg.nodes[na].out[0];
-                if fg.nodes[nb].out.len() != 1 || fg.nodes[nb].node_type == NodeType::Normal {
-                    break;
-                }
-                e1 = fg.nodes[nb].out[0];
+        && let Some(mut e1) = oe1
+    {
+        let mut e0 = fg.nodes[n0].out[0];
+        for _ in 0..2 {
+            let na = fg.edges[e0].head;
+            let nb = fg.edges[e1].head;
+            if na == nb {
+                break;
             }
+            if order != (fg.nodes[na].order > fg.nodes[nb].order) {
+                return true;
+            }
+            if fg.nodes[na].out.len() != 1 || fg.nodes[na].node_type == NodeType::Normal {
+                break;
+            }
+            e0 = fg.nodes[na].out[0];
+            if fg.nodes[nb].out.len() != 1 || fg.nodes[nb].node_type == NodeType::Normal {
+                break;
+            }
+            e1 = fg.nodes[nb].out[0];
         }
+    }
     // same walk on in-edges comparing tails
     if fg.nodes[n0].in_.len() == 1
-        && let Some(mut e1) = ie1 {
-            let mut e0 = fg.nodes[n0].in_[0];
-            for _ in 0..2 {
-                let na = fg.edges[e0].tail;
-                let nb = fg.edges[e1].tail;
-                if na == nb {
-                    break;
-                }
-                if order != (fg.nodes[na].order > fg.nodes[nb].order) {
-                    return true;
-                }
-                if fg.nodes[na].in_.len() != 1 || fg.nodes[na].node_type == NodeType::Normal {
-                    break;
-                }
-                e0 = fg.nodes[na].in_[0];
-                if fg.nodes[nb].in_.len() != 1 || fg.nodes[nb].node_type == NodeType::Normal {
-                    break;
-                }
-                e1 = fg.nodes[nb].in_[0];
+        && let Some(mut e1) = ie1
+    {
+        let mut e0 = fg.nodes[n0].in_[0];
+        for _ in 0..2 {
+            let na = fg.edges[e0].tail;
+            let nb = fg.edges[e1].tail;
+            if na == nb {
+                break;
             }
+            if order != (fg.nodes[na].order > fg.nodes[nb].order) {
+                return true;
+            }
+            if fg.nodes[na].in_.len() != 1 || fg.nodes[na].node_type == NodeType::Normal {
+                break;
+            }
+            e0 = fg.nodes[na].in_[0];
+            if fg.nodes[nb].in_.len() != 1 || fg.nodes[nb].node_type == NodeType::Normal {
+                break;
+            }
+            e1 = fg.nodes[nb].in_[0];
         }
+    }
     false
 }
 
@@ -2871,10 +2880,9 @@ fn self_right(fg: &mut Fg, g: GId, edges: &[EId], stepx: f64, sizey: f64) {
         fg.edges[e0].tail_port.side as i32,
         fg.edges[e0].head_port.side as i32,
     );
-    if (point_pair == 32 || point_pair == 65)
-        && tp.y == hp.y {
-            sgn = -sgn;
-        }
+    if (point_pair == 32 || point_pair == 65) && tp.y == hp.y {
+        sgn = -sgn;
+    }
     let mut tx = dx.min(3.0 * (np.x + dx - tp.x));
     let mut hx = dx.min(3.0 * (np.x + dx - hp.x));
     for &e in edges {
@@ -2928,10 +2936,9 @@ fn self_left(fg: &mut Fg, g: GId, edges: &[EId], stepx: f64, sizey: f64) {
         fg.edges[e0].tail_port.side as i32,
         fg.edges[e0].head_port.side as i32,
     );
-    if (point_pair == 12 || point_pair == 67)
-        && tp.y == hp.y {
-            sgn = -sgn;
-        }
+    if (point_pair == 12 || point_pair == 67) && tp.y == hp.y {
+        sgn = -sgn;
+    }
     let mut tx = dx.min(3.0 * (tp.x + dx - np.x));
     let mut hx = dx.min(3.0 * (hp.x + dx - np.x));
     for &e in edges {

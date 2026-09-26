@@ -168,15 +168,16 @@ fn map_path(fg: &mut Fg, from: NId, to: NId, orig: EId, mut ve: EId, etype: Edge
         fg.edges[orig].to_virt = None;
         if fg.nodes[to].rank - fg.nodes[from].rank == 1
             && let Some(e) = find_fast_edge(fg, from, to)
-                && ports_eq(fg, orig, e) {
-                    merge_oneway(fg, orig, e);
-                    if fg.nodes[from].node_type == NodeType::Normal
-                        && fg.nodes[to].node_type == NodeType::Normal
-                    {
-                        other_edge(fg, orig);
-                    }
-                    return;
-                }
+            && ports_eq(fg, orig, e)
+        {
+            merge_oneway(fg, orig, e);
+            if fg.nodes[from].node_type == NodeType::Normal
+                && fg.nodes[to].node_type == NodeType::Normal
+            {
+                other_edge(fg, orig);
+            }
+            return;
+        }
         let mut u = from;
         let mut r = fg.nodes[from].rank;
         while r < fg.nodes[to].rank {

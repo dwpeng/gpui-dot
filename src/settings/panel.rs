@@ -5,9 +5,7 @@ use gpui_kit::WeakEntity;
 
 use crate::app::GraphView;
 
-use super::{
-    LABEL_SCALE_MAX, LABEL_SCALE_MIN, LABEL_SCALE_STEP, SettingRow, Settings,
-};
+use super::{LABEL_SCALE_MAX, LABEL_SCALE_MIN, LABEL_SCALE_STEP, SettingRow, Settings};
 
 /// Builds the settings-card rows from a snapshot of [`Settings`], writing
 /// changes back into the owning [`GraphView`] through the weak handle.

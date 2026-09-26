@@ -44,6 +44,8 @@ pub enum IconName {
     LoaderCircle,
     /// Toggle fullscreen (`maximize.svg`).
     Maximize,
+    /// Minimize the window (`minus.svg`).
+    Minimize,
     /// Open a new tab / another file (`plus.svg`).
     NewTab,
     /// Toggle node labels (`square-text.svg`).
@@ -76,6 +78,7 @@ impl IconNamed for IconName {
             IconName::Grid => "icons/layout-grid.svg",
             IconName::LoaderCircle => "icons/loader-circle.svg",
             IconName::Maximize => "icons/maximize.svg",
+            IconName::Minimize => "icons/minus.svg",
             IconName::NewTab | IconName::ZoomIn => "icons/plus.svg",
             IconName::NodeLabels => "icons/square-text.svg",
             IconName::OpenFile => "icons/file-up.svg",

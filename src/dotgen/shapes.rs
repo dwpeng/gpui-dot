@@ -932,9 +932,7 @@ fn poly_init_poly(
 
     // get label dimensions + minimal whitespace around label
     let mut dimen = label_dimen;
-    if (dimen.x > 0.0 || dimen.y > 0.0)
-        && !is_plain
-    {
+    if (dimen.x > 0.0 || dimen.y > 0.0) && !is_plain {
         match attr_str(attrs, "margin") {
             Some(m) => {
                 let (i, marginx, marginy) = sscanf_2lf(m);
@@ -1840,9 +1838,10 @@ fn parse_reclbl(
                     });
                 }
                 if let Some(id) = st.tmpport.take()
-                    && let Some(idx) = fp {
-                        rv.children[idx].id = Some(id);
-                    }
+                    && let Some(idx) = fp
+                {
+                    rv.children[idx].id = Some(id);
+                }
                 if st.mode & (HASTEXT | HASTABLE) == 0 {
                     // empty field ⇒ " " (shapes.c:3436-3439)
                     st.mode |= HASTEXT;
@@ -2486,11 +2485,11 @@ fn ray_inside(
             .vertices
             .as_deref()
             .filter(|v| info.sides > 0 && v.len() % info.sides as usize == 0)
-        {
-            let sides = info.sides as usize;
-            let ring_count = verts.len() / sides;
-            return vertex_inside(sides, ring_count, verts, desc.fns == ShapeFns::Star, p);
-        }
+    {
+        let sides = info.sides as usize;
+        let ring_count = verts.len() / sides;
+        return vertex_inside(sides, ring_count, verts, desc.fns == ShapeFns::Star, p);
+    }
     if desc.fns == ShapeFns::Record {
         // records use compassPort with bp set — no ray search happens.
         let ext = penwidth / 2.0;

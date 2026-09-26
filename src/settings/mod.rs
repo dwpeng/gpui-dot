@@ -149,20 +149,25 @@ mod tests {
     fn missing_and_unknown_fields_keep_their_defaults() {
         let partial = Settings::from_json(r#"{"show_grid": false}"#);
         assert!(!partial.show_grid);
-        assert!(partial.show_node_labels, "an absent field keeps its default");
+        assert!(
+            partial.show_node_labels,
+            "an absent field keeps its default"
+        );
         assert_eq!(partial.rank_dir, "TB");
 
         let extended = Settings::from_json(
             r#"{"show_grid": false, "from_the_future": 7, "theme": "dracula"}"#,
         );
-        assert!(!extended.show_grid, "a known field beside unknown ones loads");
+        assert!(
+            !extended.show_grid,
+            "a known field beside unknown ones loads"
+        );
     }
 
     #[test]
     fn wrongly_typed_fields_keep_their_defaults() {
-        let settings = Settings::from_json(
-            r#"{"show_grid": "no", "rank_dir": 3, "label_scale": "big"}"#,
-        );
+        let settings =
+            Settings::from_json(r#"{"show_grid": "no", "rank_dir": 3, "label_scale": "big"}"#);
         assert!(settings.show_grid, "a non-boolean keeps the default");
         assert_eq!(settings.rank_dir, "TB", "a non-string falls back");
         assert_eq!(settings.label_scale, 1.0, "a non-number falls back");

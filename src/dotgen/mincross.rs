@@ -411,8 +411,15 @@ impl MinCross {
     /// Caller must have verified AVX2 support. Indices must be in range of
     /// the snapshot arrays (guaranteed: they come from the CSR starts).
     #[cfg(target_arch = "x86_64")]
-    unsafe fn in_cross_pair_avx2(&self, v0: usize, v1: usize, w0: usize, w1: usize, c0: &mut i64, c1: &mut i64) {
-
+    unsafe fn in_cross_pair_avx2(
+        &self,
+        v0: usize,
+        v1: usize,
+        w0: usize,
+        w1: usize,
+        c0: &mut i64,
+        c1: &mut i64,
+    ) {
         unsafe {
             use core::arch::x86_64::*;
             let s = &self.snap;
@@ -440,18 +447,14 @@ impl MinCross {
                     // fires in the no-port path ⇒ no term)
                     let p0 = _mm256_and_si256(prod, _mm256_cmpgt_epi32(t, zero));
                     let p1 = _mm256_and_si256(prod, _mm256_cmpgt_epi32(zero, t));
-                    acc0 = _mm256_add_epi64(
-                        acc0,
-                        _mm256_cvtepi32_epi64(_mm256_castsi256_si128(p0)),
-                    );
+                    acc0 =
+                        _mm256_add_epi64(acc0, _mm256_cvtepi32_epi64(_mm256_castsi256_si128(p0)));
                     acc0h = _mm256_add_epi64(
                         acc0h,
                         _mm256_cvtepi32_epi64(_mm256_extracti128_si256(p0, 1)),
                     );
-                    acc1 = _mm256_add_epi64(
-                        acc1,
-                        _mm256_cvtepi32_epi64(_mm256_castsi256_si128(p1)),
-                    );
+                    acc1 =
+                        _mm256_add_epi64(acc1, _mm256_cvtepi32_epi64(_mm256_castsi256_si128(p1)));
                     acc1h = _mm256_add_epi64(
                         acc1h,
                         _mm256_cvtepi32_epi64(_mm256_extracti128_si256(p1, 1)),
@@ -474,7 +477,6 @@ impl MinCross {
             }
             *c0 += horiz_i64(acc0) + horiz_i64(acc0h);
             *c1 += horiz_i64(acc1) + horiz_i64(acc1h);
-    
         }
     }
 
@@ -487,8 +489,15 @@ impl MinCross {
     /// Caller must have verified AVX2 support. Indices must be in range of
     /// the snapshot arrays.
     #[cfg(target_arch = "x86_64")]
-    unsafe fn out_cross_pair_avx2(&self, v0: usize, v1: usize, w0: usize, w1: usize, c0: &mut i32, c1: &mut i32) {
-
+    unsafe fn out_cross_pair_avx2(
+        &self,
+        v0: usize,
+        v1: usize,
+        w0: usize,
+        w1: usize,
+        c0: &mut i32,
+        c1: &mut i32,
+    ) {
         unsafe {
             use core::arch::x86_64::*;
             let s = &self.snap;
@@ -510,8 +519,10 @@ impl MinCross {
                         _mm256_loadu_si256(xp.as_ptr().add(m) as *const __m256i),
                         cnt,
                     );
-                    acc0 = _mm256_add_epi32(acc0, _mm256_and_si256(prod, _mm256_cmpgt_epi32(t, zero)));
-                    acc1 = _mm256_add_epi32(acc1, _mm256_and_si256(prod, _mm256_cmpgt_epi32(zero, t)));
+                    acc0 =
+                        _mm256_add_epi32(acc0, _mm256_and_si256(prod, _mm256_cmpgt_epi32(t, zero)));
+                    acc1 =
+                        _mm256_add_epi32(acc1, _mm256_and_si256(prod, _mm256_cmpgt_epi32(zero, t)));
                     m += 8;
                 }
                 while m < v1 {
@@ -529,7 +540,6 @@ impl MinCross {
             }
             *c0 = c0.wrapping_add(horiz_i32_wrapping(acc0));
             *c1 = c1.wrapping_add(horiz_i32_wrapping(acc1));
-    
         }
     }
 }
@@ -663,7 +673,6 @@ struct Snap {
     /// Whether the arrays mirror the arena's current state.
     valid: bool,
 }
-
 
 /// The module-static state of mincross.c (L159-179) plus the rank-window
 /// bookkeeping the C encodes in raw interior pointers (see the module docs).
@@ -1192,10 +1201,9 @@ impl MinCross {
             let maxthispass;
             if pass <= 1 {
                 maxthispass = 4.min(self.maxiter); // MIN(4, MaxIter) (L704)
-                if g == fg.root_g()
-                    && self.build_ranks(fg, g, pass) != 0 {
-                        return -1;
-                    }
+                if g == fg.root_g() && self.build_ranks(fg, g, pass) != 0 {
+                    return -1;
+                }
                 if pass == 0 {
                     self.flat_breakcycles(fg, g); // L709-710
                 }
@@ -1377,7 +1385,11 @@ impl MinCross {
             r += dir;
         }
         if t_dbg {
-            eprintln!("[timing]       step: medians {:.3}s reorder {:.3}s", tm.as_secs_f64(), tr.as_secs_f64());
+            eprintln!(
+                "[timing]       step: medians {:.3}s reorder {:.3}s",
+                tm.as_secs_f64(),
+                tr.as_secs_f64()
+            );
         }
         self.transpose(fg, g, !reverse); // L1479: the OPPOSITE of reorder's `reverse`
     }
@@ -1443,32 +1455,35 @@ impl MinCross {
         // changed membership. Neighbor ranks' caches die wholesale.
         let (a, b) = (vi.min(wi) as usize, vi.max(wi) as usize);
         if let Some(xc) = self.xcache.get_mut(ri(r))
-            && xc.n > 0 && a < xc.n {
-                if b == a + 1 {
-                    let e = &mut xc.entries[a];
-                    if e.ok {
-                        std::mem::swap(&mut e.c0i, &mut e.c1i);
-                        std::mem::swap(&mut e.c0o, &mut e.c1o);
-                    }
-                } else {
-                    xc.entries[a].ok = false;
+            && xc.n > 0
+            && a < xc.n
+        {
+            if b == a + 1 {
+                let e = &mut xc.entries[a];
+                if e.ok {
+                    std::mem::swap(&mut e.c0i, &mut e.c1i);
+                    std::mem::swap(&mut e.c0o, &mut e.c1o);
                 }
-                if a > 0 {
-                    xc.entries[a - 1].ok = false;
-                }
-                if b < xc.n {
-                    xc.entries[b].ok = false;
-                }
-                if b - 1 > a && b - 1 < xc.n {
-                    xc.entries[b - 1].ok = false;
-                }
+            } else {
+                xc.entries[a].ok = false;
             }
+            if a > 0 {
+                xc.entries[a - 1].ok = false;
+            }
+            if b < xc.n {
+                xc.entries[b].ok = false;
+            }
+            if b - 1 > a && b - 1 < xc.n {
+                xc.entries[b - 1].ok = false;
+            }
+        }
         for rr in [r - 1, r + 1] {
             if rr >= 0
-                && let Some(xc) = self.xcache.get_mut(ri(rr)) {
-                    xc.n = 0;
-                    xc.entries.clear();
-                }
+                && let Some(xc) = self.xcache.get_mut(ri(rr))
+            {
+                xc.n = 0;
+                xc.entries.clear();
+            }
         }
         // C aliases the clusters' rank slices into the root's row; this port
         // keeps copies, so the swap has to be mirrored.
@@ -1534,7 +1549,13 @@ impl MinCross {
                     c0o = a;
                     c1o = b;
                 }
-                self.xcache[ri(r)].entries[i] = XEntry { c0i, c1i, c0o, c1o, ok: true };
+                self.xcache[ri(r)].entries[i] = XEntry {
+                    c0i,
+                    c1i,
+                    c0o,
+                    c1o,
+                    ok: true,
+                };
                 (c0i + c0o as i64, c1i + c1o as i64)
             };
             if c1 < c0 || (c0 > 0 && reverse && c1 == c0) {
@@ -1664,8 +1685,8 @@ impl MinCross {
                 for k in s0..s1 {
                     if self.snap.out_xp[k] > 0 {
                         list.push(
-                            (MC_SCALE * self.snap.out_eho[k] as i64
-                                + self.snap.out_hpo[k] as i64) as i32,
+                            (MC_SCALE * self.snap.out_eho[k] as i64 + self.snap.out_hpo[k] as i64)
+                                as i32,
                         );
                     }
                 }
@@ -1674,8 +1695,8 @@ impl MinCross {
                 for k in t0..t1 {
                     if self.snap.in_xp[k] > 0 {
                         list.push(
-                            (MC_SCALE * self.snap.in_eto[k] as i64
-                                + self.snap.in_tpo[k] as i64) as i32,
+                            (MC_SCALE * self.snap.in_eto[k] as i64 + self.snap.in_tpo[k] as i64)
+                                as i32,
                         );
                     }
                 }
@@ -2252,9 +2273,14 @@ impl MinCross {
             let results: Vec<Vec<(i32, i64)>> = std::thread::scope(|scope| {
                 let handles: Vec<_> = invalid
                     .chunks(chunk)
-                    .map(|ch| scope.spawn(move || ch.iter().map(|&r| (r, me.rcross(fgr, r))).collect()))
+                    .map(|ch| {
+                        scope.spawn(move || ch.iter().map(|&r| (r, me.rcross(fgr, r))).collect())
+                    })
                     .collect();
-                handles.into_iter().map(|h| h.join().expect("rcross thread")).collect()
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("rcross thread"))
+                    .collect()
             });
             for part in results {
                 for (r, nc) in part {
@@ -2757,7 +2783,15 @@ mod tests {
         };
         let ne = 257usize;
         mc.snap.in_eto = (0..ne).map(|_| (next() % 40) as i32).collect();
-        mc.snap.in_xp = (0..ne).map(|i| if i % 17 == 0 { ((next() % 1000) as i32).wrapping_neg() } else { (next() % 5000) as i32 }).collect();
+        mc.snap.in_xp = (0..ne)
+            .map(|i| {
+                if i % 17 == 0 {
+                    ((next() % 1000) as i32).wrapping_neg()
+                } else {
+                    (next() % 5000) as i32
+                }
+            })
+            .collect();
         mc.snap.out_eho = (0..ne).map(|_| (next() % 40) as i32).collect();
         mc.snap.out_xp = mc.snap.in_xp.clone();
         mc.snap.in_tpx = vec![0.0; ne];
@@ -2776,7 +2810,11 @@ mod tests {
                 for m in v0..v1 {
                     let t = mc.snap.in_eto[m] - mc.snap.in_eto[k];
                     let prod = mc.snap.in_xp[m].wrapping_mul(mc.snap.in_xp[k]);
-                    if t > 0 { c0 += prod as i64; } else if t < 0 { c1 += prod as i64; }
+                    if t > 0 {
+                        c0 += prod as i64;
+                    } else if t < 0 {
+                        c1 += prod as i64;
+                    }
                 }
             }
             sums[case] = (c0, c1);
@@ -2785,7 +2823,11 @@ mod tests {
                 let mut r0 = s0;
                 let mut r1 = s1;
                 mc.in_cross_pair_avx2(v0, v1, w0, w1, &mut r0, &mut r1);
-                assert_eq!((r0, r1), sums[case], "in case {case}: [{v0}..{v1}) x [{w0}..{w1})");
+                assert_eq!(
+                    (r0, r1),
+                    sums[case],
+                    "in case {case}: [{v0}..{v1}) x [{w0}..{w1})"
+                );
             }
         }
         // out (i32 wrapping) — verify against scalar with adversarial products
@@ -2796,7 +2838,9 @@ mod tests {
             seed2 ^= seed2 << 17;
             seed2
         };
-        mc.snap.out_xp = (0..ne).map(|_| (next2() % (i32::MAX as u64 / 3)) as i32).collect();
+        mc.snap.out_xp = (0..ne)
+            .map(|_| (next2() % (i32::MAX as u64 / 3)) as i32)
+            .collect();
         for case in 0..8usize {
             let v0 = (case * 29) % ne;
             let v1 = v0 + 1 + (next2() as usize) % (ne - v0).min(64);
@@ -2808,7 +2852,11 @@ mod tests {
                 for m in v0..v1 {
                     let t = mc.snap.out_eho[m] - mc.snap.out_eho[k];
                     let prod = mc.snap.out_xp[m].wrapping_mul(mc.snap.out_xp[k]);
-                    if t > 0 { c0 = c0.wrapping_add(prod); } else if t < 0 { c1 = c1.wrapping_add(prod); }
+                    if t > 0 {
+                        c0 = c0.wrapping_add(prod);
+                    } else if t < 0 {
+                        c1 = c1.wrapping_add(prod);
+                    }
                 }
             }
             unsafe {

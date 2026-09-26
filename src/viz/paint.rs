@@ -282,11 +282,8 @@ fn paint_edge(
                 &mut dash.stack,
                 &mut dash.samples,
             );
-            dash.pts.extend(
-                dash.samples
-                    .iter()
-                    .map(|&(x, y)| point(px(x), px(y))),
-            );
+            dash.pts
+                .extend(dash.samples.iter().map(|&(x, y)| point(px(x), px(y))));
             primitives::stroke_dashed_polyline(
                 window,
                 &dash.pts,

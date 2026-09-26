@@ -47,18 +47,17 @@
 
 use gpui_kit::base::StyledExt as _;
 use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::Icon;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::Icon;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Anchor, App, AppContext as _, Background, Context, Entity, Hsla,
-    InteractiveElement as _, IntoElement, MouseButton, ParentElement, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Subscription, TestSupportExt as _, WeakEntity,
-    Window, div, px,
+    Anchor, App, AppContext as _, Background, Context, Entity, Hsla, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement as _,
+    Styled, Subscription, TestSupportExt as _, WeakEntity, Window, div, px, relative,
 };
 
 use crate::app::GraphView;
@@ -66,25 +65,18 @@ use crate::icons::IconName;
 
 /// A tab floats inside the taller title bar: this tall, which leaves an equal
 /// gap above and below and keeps every control in the row on one centre line.
-const TAB_HEIGHT: f32 = 28.0;
+const TAB_HEIGHT: f32 = 24.0;
 /// Chrome rounds a tab on all four corners; it is a floating shape, not a
 /// block with a squared-off foot.
 const TAB_RADIUS: f32 = 8.0;
-/// The widest a tab grows, however wide the window is: past this a couple of
-/// tabs would be absurdly wide, and the leftover row is left empty.
-const TAB_MAX_WIDTH: f32 = 240.0;
+/// The widest a tab grows, as a share of the lane it sits in. A share is what
+/// the layouter measures, so a tab's width follows its own container rather
+/// than a width we work out from the window; it also keeps a single tab from
+/// eating the whole row.
+const TAB_MAX_SHARE: f32 = 0.2;
 /// Where equal shares stop shrinking; past this the lane clips, and the
 /// tab list is the way back to what scrolled out.
-const TAB_MIN_WIDTH: f32 = 56.0;
-/// What a tab does not get: the row's own left inset, the tab list, the `+`,
-/// and the gaps around the lane. Subtracted from the window width to work out
-/// what the tabs have to share.
-const ROW_CHROME_WIDTH: f32 =
-    crate::ui::title_bar::ROW_LEFT_INSET + CONTROL_SIZE + GAP + GAP + CONTROL_SIZE;
-/// The gap between the row's controls and the lane.
-const GAP: f32 = 4.0;
-/// How far the separator between two idle tabs stays off the ends.
-const SEPARATOR_INSET: f32 = 6.0;
+const TAB_MIN_WIDTH: f32 = 42.0;
 /// The footprint of the two controls beside the tabs: Chrome gives the tab
 /// list and the `+` the same small square, a shade lighter on hover.
 const CONTROL_SIZE: f32 = 26.0;
@@ -104,23 +96,13 @@ struct TabSearch {
 type TabEntry = (u64, SharedString, SharedString);
 
 /// Renders the tab strip for `view`: the tab list, the tabs, then the `+`.
-pub fn tab_bar(
-    view: &GraphView,
-    window: &Window,
-    cx: &mut Context<GraphView>,
-) -> impl IntoElement {
+pub fn tab_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoElement {
     let weak = cx.weak_entity();
     let theme = cx.theme();
-    // Chrome's palette, in the theme's own words: the active tab wears the
-    // surface the canvas is painted with, idle tabs wear nothing, hovering one
-    // lifts it off the frame, and the separator is a hairline of ink rather
-    // than a theme border — the frame is already a border colour, so a
-    // border-toned line on it would not read at all.
     let active_surface: Hsla = theme.background;
     let hover_tint: Background = theme.tokens.secondary_hover.into();
     let active_ink: Hsla = theme.tab_active_foreground;
     let idle_ink: Hsla = theme.tab_foreground;
-    let separator: Hsla = theme.muted_foreground.opacity(0.35);
     let active_index = view.active_index();
     let active_id = view.active().map(|tab| tab.id);
     let entries: Vec<TabEntry> = view
@@ -134,7 +116,6 @@ pub fn tab_bar(
         })
         .collect();
     let has_tabs = !entries.is_empty();
-    let tab_width = tab_width(window, entries.len());
 
     // The tab list, at the far left: it opens the search panel below the button.
     let tab_list = {
@@ -172,32 +153,25 @@ pub fn tab_bar(
                             .rounded(px(CONTROL_RADIUS))
                             .tooltip("Search tabs (Ctrl+Shift+A)"),
                     )
-                    .content(move |_, window, cx| {
-                        tab_menu(&weak, &entries, active_id, window, cx)
-                    }),
+                    .content(move |_, window, cx| tab_menu(&weak, &entries, active_id, window, cx)),
             )
     };
 
-    // The `+` follows the last tab, the way Chrome's does.
     let add = {
         let weak = weak.clone();
-        div()
-            .id("dotv-tab-add")
-            .flex_shrink_0()
-            .occlude()
-            .child(
-                Button::new("tab-add")
-                    .icon(IconName::NewTab)
-                    .ghost()
-                    .small()
-                    .w(px(CONTROL_SIZE))
-                    .h(px(CONTROL_SIZE))
-                    .rounded(px(CONTROL_RADIUS))
-                    .tooltip("Open a DOT file (Ctrl+O)")
-                    .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                        let _ = weak.update(cx, |view, cx| view.open_graph(cx));
-                    }),
-            )
+        div().id("dotv-tab-add").flex_shrink_0().occlude().child(
+            Button::new("tab-add")
+                .icon(IconName::NewTab)
+                .ghost()
+                .small()
+                .w(px(CONTROL_SIZE))
+                .h(px(CONTROL_SIZE))
+                .rounded(px(CONTROL_RADIUS))
+                .tooltip("Open a DOT file (Ctrl+O)")
+                .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                    let _ = weak.update(cx, |view, cx| view.open_graph(cx));
+                }),
+        )
     };
 
     let tabs = view
@@ -206,9 +180,6 @@ pub fn tab_bar(
         .map(|(index, tab)| {
             let tab_id = tab.id;
             let is_active = index == active_index;
-            // The separator is dropped beside the active tab, as in Chrome:
-            // the tab's own edges do the separating there.
-            let show_separator = index > 0 && !is_active && index - 1 != active_index;
             let fill = if is_active {
                 active_surface
             } else {
@@ -220,24 +191,12 @@ pub fn tab_bar(
                 .relative()
                 .occlude()
                 .test_support()
-                // A definite width, not one drawn from the title: every tab is
-                // the same size whatever it is called, so a long name is
-                // truncated instead of widening its tab (and the lane, and the
-                // row). The width itself follows the window, and the tabs shrink
-                // together if the estimate is off, down to the floor.
-                .w(px(tab_width))
-                .flex_shrink(1.0)
                 .min_w(px(TAB_MIN_WIDTH))
-                // GPUI's native tooltip takes a view, so the path is rendered by
-                // a tiny one of our own rather than by a text argument.
+                .max_w(relative(TAB_MAX_SHARE))
                 .tooltip({
                     let path = SharedString::from(tab.path.display().to_string());
                     move |_window, cx| cx.new(|_| TabTooltip { path: path.clone() }).into()
                 })
-                // Dragging the tab carries it to another slot: the payload is
-                // the tab's identity and its name for the chip that follows the
-                // cursor, so the gesture needs no state in the view. Dropping on
-                // a tab moves the dragged one into that tab's place.
                 .on_drag(
                     TabDrag {
                         tab_id,
@@ -262,25 +221,15 @@ pub fn tab_bar(
                 .flex()
                 .items_center()
                 .gap_1()
-                .pl_2()
-                .pr_1()
+                .when_else(index == 0, |this| this.ml_0(), |this| this.ml_1())
+                .mr_1()
+                .px_2()
                 .rounded(px(TAB_RADIUS))
                 .text_sm()
                 .text_color(if is_active { active_ink } else { idle_ink })
                 .bg(fill)
                 .when(!is_active, |this| {
                     this.hover(move |style| style.bg(hover_tint))
-                })
-                .when(show_separator, |this| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top(px(SEPARATOR_INSET))
-                            .bottom(px(SEPARATOR_INSET))
-                            .w(px(1.0))
-                            .bg(separator),
-                    )
                 })
                 .child(
                     div()
@@ -321,33 +270,19 @@ pub fn tab_bar(
         .min_w_0()
         .h_flex()
         .gap_1()
-        // No inset of its own: the title bar sets the row's left padding,
-        // and adding to it here would only push the tab list back in.
         .when(has_tabs, |strip| {
-            strip
-                .child(tab_list)
-                .child(
-                    div()
-                        .h_full()
-                        .min_w_0()
-                        .flex_shrink(1.0)
-                        .flex()
-                        .items_center()
-                        .overflow_hidden()
-                        .children(tabs),
-                )
-                .child(add)
+            strip.child(tab_list).child(
+                div()
+                    .h_full()
+                    .min_w_0()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .children(tabs)
+                    .child(add),
+            )
         })
-}
-
-/// The width one tab gets in a window this wide: an equal share of what the
-/// row has left once the tab list and the `+` have taken theirs, so the strip
-/// answers to the window — a wide window gets wide tabs, a narrow one narrow
-/// tabs — and is clamped at both ends so neither a couple of tabs nor a
-/// crowded strip looks wrong.
-fn tab_width(window: &Window, tabs: usize) -> f32 {
-    let shared = window.bounds().size.width.as_f32() - ROW_CHROME_WIDTH;
-    (shared / tabs.max(1) as f32).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
 /// What a dragged tab hands to whatever it is dropped on: its identity, and
@@ -417,17 +352,15 @@ fn close_button(tab_id: u64, weak: &WeakEntity<GraphView>) -> impl IntoElement {
         // start dragging it.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
-            Button::new(SharedString::from(format!(
-                "tab-close-button-{tab_id}"
-            )))
-            .icon(IconName::CloseTab)
-            .ghost()
-            .xsmall()
-            .tooltip("Close tab (Ctrl+W)")
-            .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                cx.stop_propagation();
-                let _ = weak.update(cx, |view, cx| view.close_tab(tab_id, cx));
-            }),
+            Button::new(SharedString::from(format!("tab-close-button-{tab_id}")))
+                .icon(IconName::CloseTab)
+                .ghost()
+                .xsmall()
+                .tooltip("Close tab (Ctrl+W)")
+                .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                    cx.stop_propagation();
+                    let _ = weak.update(cx, |view, cx| view.close_tab(tab_id, cx));
+                }),
         )
 }
 
@@ -577,14 +510,15 @@ fn tab_menu(
                                 .appearance(false),
                         ),
                 )
-                .child(div().flex_shrink_0().text_xs().text_color(muted).child("Ctrl+Shift+A")),
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("Ctrl+Shift+A"),
+                ),
         )
-        .child(
-            div()
-                .text_xs()
-                .text_color(muted)
-                .child("Open tabs"),
-        )
+        .child(div().text_xs().text_color(muted).child("Open tabs"))
         .child(
             div()
                 .v_flex()

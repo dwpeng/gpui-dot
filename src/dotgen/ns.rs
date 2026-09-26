@@ -173,10 +173,7 @@ impl<'a> NsCtx<'a> {
     }
 
     fn add_tree_edge(&mut self, e: EId) {
-        debug_assert!(
-            !self.is_tree_edge(e),
-            "add_tree_edge: already a tree edge"
-        );
+        debug_assert!(!self.is_tree_edge(e), "add_tree_edge: already a tree edge");
         self.e_tidx[e] = self.tree_edge.len() as i32;
         self.tree_edge.push(e);
         let n = self.e_tail[e];
@@ -225,7 +222,10 @@ impl<'a> NsCtx<'a> {
         {
             let list = &mut self.tree_out[n];
             let i = list.len() - 1;
-            let j = list.iter().position(|&x| x == e).expect("tree edge missing");
+            let j = list
+                .iter()
+                .position(|&x| x == e)
+                .expect("tree edge missing");
             list.swap(j, i);
             list.pop();
         }
@@ -233,7 +233,10 @@ impl<'a> NsCtx<'a> {
         {
             let list = &mut self.tree_in[n];
             let i = list.len() - 1;
-            let j = list.iter().position(|&x| x == e).expect("tree edge missing");
+            let j = list
+                .iter()
+                .position(|&x| x == e)
+                .expect("tree edge missing");
             list.swap(j, i);
             list.pop();
         }
@@ -600,20 +603,19 @@ impl<'a> NsCtx<'a> {
             let top = todo.len() - 1;
             let (fv, fts, ffrom, _, _) = todo[top];
 
-            if todo[top].3 == 0 && todo[top].4 == 0
+            if todo[top].3 == 0
+                && todo[top].4 == 0
                 && let Some(b) = best
-                    && self.slack(b) == 0 {
-                        todo.pop();
-                        continue;
-                    }
+                && self.slack(b) == 0
+            {
+                todo.pop();
+                continue;
+            }
 
             let mut updated = false;
 
             // out edges
-            let (fo, lo) = (
-                self.out_start[fv] as usize,
-                self.out_start[fv + 1] as usize,
-            );
+            let (fo, lo) = (self.out_start[fv] as usize, self.out_start[fv + 1] as usize);
             while todo[top].3 < lo - fo {
                 let e = self.out_edge[fo + todo[top].3];
                 if self.is_tree_edge(e) {
@@ -660,9 +662,10 @@ impl<'a> NsCtx<'a> {
                 }
                 let t = self.e_tail[e];
                 if root_of(t) != fts
-                    && (best.is_none() || self.slack(e) < self.slack(best.unwrap())) {
-                        best = Some(e);
-                    }
+                    && (best.is_none() || self.slack(e) < self.slack(best.unwrap()))
+                {
+                    best = Some(e);
+                }
                 todo[top].4 += 1;
             }
             if updated {
@@ -814,11 +817,7 @@ impl<'a> NsCtx<'a> {
                 break;
             }
             let e = e as EId;
-            let d = if self.e_tail[e] == v {
-                dir
-            } else {
-                !dir
-            };
+            let d = if self.e_tail[e] == v { dir } else { !dir };
             if d {
                 self.e_cutvalue[e] += cutvalue;
             } else {
@@ -920,11 +919,7 @@ impl<'a> NsCtx<'a> {
             rv -= self.e_weight[e];
         }
         let mut d = if dir > 0 {
-            if h == v {
-                1
-            } else {
-                -1
-            }
+            if h == v { 1 } else { -1 }
         } else if t == v {
             1
         } else {
@@ -1213,10 +1208,8 @@ impl<'a> NsCtx<'a> {
             if adj != 0 {
                 for &n in &self.nodes {
                     if self.n_normal[n] {
-                        let in_empty =
-                            self.in_start[n + 1] == self.in_start[n];
-                        let out_empty =
-                            self.out_start[n + 1] == self.out_start[n];
+                        let in_empty = self.in_start[n + 1] == self.in_start[n];
+                        let out_empty = self.out_start[n + 1] == self.out_start[n];
                         if in_empty && adj == 1 {
                             self.n_rank[n] = 0;
                         }

@@ -195,9 +195,10 @@ pub fn flat_edge(fg: &mut Fg, g: GId, e: EId) {
 pub fn delete_flat_edge(fg: &mut Fg, e: EId) {
     let orig = fg.edges[e].to_orig;
     if let Some(orig) = orig
-        && fg.edges[orig].to_virt == Some(e) {
-            fg.edges[orig].to_virt = None;
-        }
+        && fg.edges[orig].to_virt == Some(e)
+    {
+        fg.edges[orig].to_virt = None;
+    }
     let (t, h) = (fg.edges[e].tail, fg.edges[e].head);
     zapinlist(&mut fg.nodes[t].flat_out, e);
     zapinlist(&mut fg.nodes[h].flat_in, e);
@@ -709,27 +710,27 @@ pub fn class2(fg: &mut Fg, g: GId) {
             // merge multi-edges
             if let Some(prev_e) = prev
                 && fg.edges[e].tail == fg.edges[prev_e].tail
-                    && fg.edges[e].head == fg.edges[prev_e].head
-                {
-                    if fg.nodes[fg.edges[e].tail].rank == fg.nodes[fg.edges[e].head].rank {
-                        merge_oneway(fg, e, prev_e);
-                        other_edge(fg, e);
-                        continue;
-                    }
-                    if fg.edges[e].label.is_none()
-                        && fg.edges[prev_e].label.is_none()
-                        && ports_eq(fg, e, prev_e)
-                    {
-                        if fg.concentrate {
-                            fg.edges[e].edge_type = EdgeType::Ignored;
-                        } else {
-                            merge_chain(fg, g, e, fg.edges[prev_e].to_virt.unwrap(), true);
-                            other_edge(fg, e);
-                        }
-                        continue;
-                    }
-                    // parallel edges with different labels fall through
+                && fg.edges[e].head == fg.edges[prev_e].head
+            {
+                if fg.nodes[fg.edges[e].tail].rank == fg.nodes[fg.edges[e].head].rank {
+                    merge_oneway(fg, e, prev_e);
+                    other_edge(fg, e);
+                    continue;
                 }
+                if fg.edges[e].label.is_none()
+                    && fg.edges[prev_e].label.is_none()
+                    && ports_eq(fg, e, prev_e)
+                {
+                    if fg.concentrate {
+                        fg.edges[e].edge_type = EdgeType::Ignored;
+                    } else {
+                        merge_chain(fg, g, e, fg.edges[prev_e].to_virt.unwrap(), true);
+                        other_edge(fg, e);
+                    }
+                    continue;
+                }
+                // parallel edges with different labels fall through
+            }
 
             // self edges
             if fg.edges[e].tail == fg.edges[e].head {

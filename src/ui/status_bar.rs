@@ -19,14 +19,21 @@ use crate::icons::IconName;
 use crate::settings::SettingsCard;
 use crate::settings::panel as settings_panel;
 use crate::ui::loading::loading_spinner;
+use crate::ui::zoom_cluster;
 
 /// Renders the status bar for `view`.
 pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoElement {
+    // Zooming a drawing that is not there has no meaning — in the empty
+    // state, and under the first-load veil, the controls are withheld
+    // rather than reading a zoom for a graph that has not arrived.
+    let has_document = view.active().is_some_and(|tab| tab.document.is_some());
+    // Built here rather than in the builder chain below: `zoom_cluster`
+    // answers a mutable `cx`, and `cx.theme()` owns a borrow of `*cx` for
+    // the rest of the body.
+    let zoom = has_document.then(|| zoom_cluster(view, cx));
+
     let theme = cx.theme();
     let weak = cx.weak_entity();
-
-    // The settings card opens from the leftmost control; the popover grows
-    // upward from the status bar.
     let settings = view.settings.clone();
     let settings_trigger = {
         let weak = weak.clone();
@@ -127,19 +134,6 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
             window.dispatch_action(Box::new(ToggleFullscreen), cx);
         });
 
-    // Counts and the selection read-out: the status bar is where the user
-    // checks what is loaded and what a click selected. Both describe the
-    // visible tab.
-    let summary = view
-        .active()
-        .and_then(|tab| tab.document.as_ref())
-        .map(|document| {
-            format!(
-                "{} nodes · {} edges",
-                document.graph.nodes.len(),
-                document.graph.edges.len()
-            )
-        });
     let selected = view.active().and_then(|tab| {
         tab.selection.and_then(|index| {
             let document = tab.document.as_ref()?;
@@ -178,6 +172,9 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
                 .gap_2()
                 .items_center()
                 .child(settings_trigger)
+                // Zoom stays beside settings: both are view controls that
+                // act on the drawing above rather than on the document.
+                .children(zoom)
                 .child(direction_toggle)
                 .children(relaying_out.then(|| {
                     div()
@@ -191,7 +188,6 @@ pub fn status_bar(view: &GraphView, cx: &mut Context<GraphView>) -> impl IntoEle
                         ))
                         .child("Laying out…")
                 }))
-                .children(summary.map(|summary| div().child(summary)))
                 .children(selected.map(|name| div().truncate().child(format!("selected: {name}")))),
         )
         .child(

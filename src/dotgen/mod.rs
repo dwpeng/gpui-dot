@@ -322,10 +322,12 @@ pub fn build(graph: &Graph, measured: &Measured) -> Fg {
         let tail_group = graph.nodes[input.tail].attrs.get("group").cloned();
         let head_group = graph.nodes[input.head].attrs.get("group").cloned();
         if let (Some(tg), Some(hg)) = (&tail_group, &head_group)
-            && !tg.is_empty() && tg == hg {
-                xpenalty = model::CL_CROSS;
-                weight *= 100;
-            }
+            && !tg.is_empty()
+            && tg == hg
+        {
+            xpenalty = model::CL_CROSS;
+            weight *= 100;
+        }
         // nonconstraint_edge: constraint attribute present and false
         let constraint_false = input
             .attrs

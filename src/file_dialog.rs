@@ -179,13 +179,14 @@ pub fn parse_pasted_paths(text: &str) -> Vec<PathBuf> {
 /// strip below covers runs where `wslpath` is missing or refuses the shape.
 fn to_linux_path(windows: &str) -> PathBuf {
     if let Ok(output) = Command::new("wslpath").arg("-u").arg(windows).output()
-        && output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            let text = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
-            if text.starts_with('/') {
-                return PathBuf::from(text);
-            }
+        && output.status.success()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let text = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+        if text.starts_with('/') {
+            return PathBuf::from(text);
         }
+    }
     // `\\wsl.localhost\Debian\home\...` / `\\wsl$\Debian\home\...` → `/home/...`
     let normalized = windows.replace('\\', "/");
     let lower = normalized.to_ascii_lowercase();

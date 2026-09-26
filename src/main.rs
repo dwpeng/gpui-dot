@@ -84,12 +84,12 @@ fn main() {
             fonts::apply_to_theme(cx);
             actions::bind_keys(cx);
             cx.spawn(async move |cx| {
-                let options = app::window_options(size(px(1280.0), px(860.0)), point(px(0.0), px(0.0)));
+                let options =
+                    app::window_options(size(px(1280.0), px(860.0)), point(px(0.0), px(0.0)));
                 let file = file.clone();
                 let store = settings.clone();
                 cx.open_window(options, move |window, cx| {
-                    let view =
-                        cx.new(|cx| app::GraphView::new(file.clone(), store.clone(), cx));
+                    let view = cx.new(|cx| app::GraphView::new(file.clone(), store.clone(), cx));
                     let focus_handle = view.focus_handle(cx);
                     window.focus(&focus_handle, cx);
                     cx.new(|cx| Root::new(view, window, cx))

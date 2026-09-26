@@ -803,9 +803,7 @@ impl Parser {
     /// `subgraph : optsubghdr body`
     fn subgraph(&mut self) -> Result<usize, DotError> {
         let mut name = None;
-        if self.eat_keyword(Kw::Subgraph)
-            && matches!(self.peek(), Tok::Atom(..))
-        {
+        if self.eat_keyword(Kw::Subgraph) && matches!(self.peek(), Tok::Atom(..)) {
             name = Some(self.atom()?.0);
         }
         self.expect_char('{')?;

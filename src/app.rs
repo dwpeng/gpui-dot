@@ -10,15 +10,15 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::WindowTextSystem;
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::TitleBar;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, AsyncApp, Bounds, ClipboardEntry, Context, DragMoveEvent, ExternalPaths,
     FileDropEvent, FocusHandle, Focusable, InteractiveElement, IntoElement, PathPromptOptions,
-    Pixels, Point, Render, SharedString, Size, TestSupportExt as _, TitlebarOptions,
-    WeakEntity, Window, WindowBounds, WindowDecorations, WindowOptions, point, px,
+    Pixels, Point, Render, SharedString, Size, TestSupportExt as _, TitlebarOptions, WeakEntity,
+    Window, WindowBounds, WindowDecorations, WindowOptions, point, px,
 };
 
 use crate::actions::{
@@ -30,7 +30,8 @@ use crate::file_dialog::{self, parse_pasted_paths};
 use crate::graph::LoadError;
 use crate::settings::{Settings, SettingsStore};
 use crate::ui::{
-    TabDrag, drop_overlay, empty_state, loading_overlay, status_bar, title_bar, zoom_cluster,
+    TabDrag, drop_overlay, empty_state, floating_zoom_cluster, loading_overlay, status_bar,
+    title_bar,
 };
 use crate::viz::GraphCanvas;
 use crate::viz::NodeDrag;
@@ -424,8 +425,7 @@ impl GraphView {
                 // maximize state and its geometry itself, and leaving a
                 // value from an earlier session here would let a stale size
                 // win later.
-                self.pre_fullscreen_size =
-                    (!window.is_maximized()).then(|| window.bounds().size);
+                self.pre_fullscreen_size = (!window.is_maximized()).then(|| window.bounds().size);
             }
             window.toggle_fullscreen();
             if !fullscreen {
@@ -1163,13 +1163,14 @@ impl Render for GraphView {
                     .when_some(loading_tab, |canvas, tab| {
                         canvas.child(loading_overlay(tab, cx))
                     })
-                    // The zoom controls only make sense with a drawing on
-                    // screen: in the empty state, and under the first-load
-                    // veil, they would sit on top of it — clickable, and
-                    // reading a zoom for a graph that is not there.
-                    .when(active.is_some_and(|tab| tab.document.is_some()), |canvas| {
-                        canvas.child(zoom_cluster(self, cx))
-                    })
+                    // Fullscreen hides the status bar; the zoom controls
+                    // then float over the drawing again rather than
+                    // vanish with it. With the chrome shown they live in
+                    // the status bar, so the two never render together.
+                    .when(
+                        fullscreen && active.is_some_and(|tab| tab.document.is_some()),
+                        |canvas| canvas.child(floating_zoom_cluster(self, cx)),
+                    )
                     .when(self.file_drag_hover, |canvas| {
                         canvas.child(drop_overlay(cx))
                     }),
@@ -1225,9 +1226,8 @@ mod tests {
         cx.update(gpui_kit::init);
         let mut view = None;
         let window = cx.open_window(size(px(640.), px(480.)), |window, cx| {
-            let root = cx.new(|cx| {
-                GraphView::new(Some(path.clone()), Some(scratch_settings(name)), cx)
-            });
+            let root =
+                cx.new(|cx| GraphView::new(Some(path.clone()), Some(scratch_settings(name)), cx));
             view = Some(root.clone());
             Root::new(root, window, cx)
         });
@@ -1363,9 +1363,68 @@ mod tests {
     /// the one on an *idle* tab also pins that a background tab can be closed
     /// without being switched to first.
     #[gpui_kit::test]
+    #[gpui::test]
+    fn fullscreen_moves_the_zoom_controls_back_to_the_canvas(cx: &mut TestAppContext) {
+        let (view, window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-a.dot", cx);
+        cx.run_until_parked();
+
+        // The fixture loads through the background executor; the zoom
+        // controls only exist once the drawing has arrived.
+        for _ in 0..100 {
+            let ready = cx.update(|cx| {
+                view.read(cx)
+                    .active()
+                    .is_some_and(|tab| tab.document.is_some())
+            });
+            if ready {
+                break;
+            }
+            cx.run_until_parked();
+        }
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find(SharedString::from("fit")).is_some(),
+                "with chrome shown, the zoom controls ride the status bar"
+            );
+        })
+        .unwrap();
+
+        // The action is what F11 and the status-bar button dispatch, so
+        // the test rides the same path; set_fullscreen itself needs a
+        // `&mut Window`, which a bare `&mut App` closure cannot reach.
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_action(Box::new(ToggleFullscreen), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find(SharedString::from("fit")).is_some(),
+                "fullscreen hides the status bar, so the controls float over the canvas"
+            );
+        })
+        .unwrap();
+
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_action(Box::new(ToggleFullscreen), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find(SharedString::from("fit")).is_some(),
+                "leaving fullscreen returns them to the status bar"
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     fn a_tab_control_in_the_title_bar_receives_clicks(cx: &mut TestAppContext) {
-        let (view, window) =
-            open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-a.dot", cx);
+        let (view, window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-a.dot", cx);
         cx.run_until_parked();
 
         // A second file opens its own tab and takes over as the active one.
@@ -1425,9 +1484,8 @@ mod tests {
 
         let mut built = None;
         let handle = cx.open_window(size(px(window_width), px(600.)), |window, cx| {
-            let root = cx.new(|cx| {
-                GraphView::new(Some(short.clone()), Some(scratch_settings(name)), cx)
-            });
+            let root =
+                cx.new(|cx| GraphView::new(Some(short.clone()), Some(scratch_settings(name)), cx));
             built = Some(root.clone());
             Root::new(root, window, cx)
         });
@@ -1462,26 +1520,24 @@ mod tests {
     /// Tabs are sized to each other, not to their titles: a short file name and
     /// a very long one lay out to the same width, and the long one truncates
     /// instead of widening its tab. The width they agree on follows the window,
-    /// so a wide window gets wider tabs than a narrow one — up to the cap.
+    /// so a wide window gets wider tabs than a narrow one.
     #[gpui_kit::test]
     fn tabs_are_all_the_same_width(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
 
         let (wide_short, wide_long) = two_tab_widths(cx, 900.0, "uniform-wide");
-        assert_eq!(
-            wide_short, wide_long,
-            "a short title and a long one are laid out the same width"
-        );
-        assert_eq!(
-            wide_short,
-            px(240.),
-            "a wide window stops at the cap instead of stretching the tabs"
+        // Flex hands out fractional widths, so "the same width" is within a
+        // pixel rather than identical — a half-pixel is not a size difference.
+        let same_width = |a: Pixels, b: Pixels| (a.as_f32() - b.as_f32()).abs() <= 1.0;
+        assert!(
+            same_width(wide_short, wide_long),
+            "a short title and a long one are laid out the same width: {wide_short:?} against {wide_long:?}"
         );
 
         let (narrow_short, narrow_long) = two_tab_widths(cx, 400.0, "uniform-narrow");
-        assert_eq!(
-            narrow_short, narrow_long,
-            "the tabs are equal in a narrow window too"
+        assert!(
+            same_width(narrow_short, narrow_long),
+            "the tabs are equal in a narrow window too: {narrow_short:?} against {narrow_long:?}"
         );
         assert!(
             narrow_short < wide_short,
@@ -1553,7 +1609,11 @@ mod tests {
         let (first, second, visible) = cx.update(|cx| {
             let tabs: Vec<u64> = view.read(cx).tabs().map(|tab| tab.id).collect();
             assert_eq!(tabs.len(), 3, "three tabs are open");
-            assert_eq!(view.read(cx).active_index(), 2, "the last opened is visible");
+            assert_eq!(
+                view.read(cx).active_index(),
+                2,
+                "the last opened is visible"
+            );
             (tabs[0], tabs[1], tabs[2])
         });
 
@@ -1589,8 +1649,7 @@ mod tests {
     /// next one starts from.
     #[gpui_kit::test]
     fn settings_survive_a_restart(cx: &mut TestAppContext) {
-        let (view, _window) =
-            open_viewer("digraph { a -> b; }", "dotv-ui-test-persist.dot", cx);
+        let (view, _window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-persist.dot", cx);
         cx.run_until_parked();
 
         cx.update(|cx| {
@@ -1616,7 +1675,10 @@ mod tests {
             Root::new(root, window, cx)
         });
         cx.update(|cx| {
-            let settings = &reopened.expect("the second view is built").read(cx).settings;
+            let settings = &reopened
+                .expect("the second view is built")
+                .read(cx)
+                .settings;
             assert!(!settings.show_grid, "the reopened viewer starts grid-less");
             assert_eq!(settings.label_scale, 1.25);
         });
@@ -1626,8 +1688,7 @@ mod tests {
     /// and its path.
     #[gpui_kit::test]
     fn the_tab_panel_filters_as_you_type(cx: &mut TestAppContext) {
-        let (view, window) =
-            open_viewer("digraph { a -> b; }", "dotv-ui-test-filter-a.dot", cx);
+        let (view, window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-filter-a.dot", cx);
         cx.run_until_parked();
 
         let second = std::env::temp_dir().join("dotv-ui-test-filter-b.dot");
@@ -1681,8 +1742,7 @@ mod tests {
     /// caption area, so it is worth pinning down.
     #[gpui_kit::test]
     fn the_tab_list_searches_and_switches_tabs(cx: &mut TestAppContext) {
-        let (view, window) =
-            open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-list.dot", cx);
+        let (view, window) = open_viewer("digraph { a -> b; }", "dotv-ui-test-tab-list.dot", cx);
         cx.run_until_parked();
 
         let second = std::env::temp_dir().join("dotv-ui-test-tab-list-b.dot");

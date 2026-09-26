@@ -47,9 +47,10 @@ pub fn dot_sameports(fg: &mut Fg, g: GId) {
                     push_group(&mut samehead, e, id);
                 }
             } else if fg.edges[e].tail == n
-                && let Some(id) = fg.edges[e].sametail.clone().filter(|s| !s.is_empty()) {
-                    push_group(&mut sametail, e, id);
-                }
+                && let Some(id) = fg.edges[e].sametail.clone().filter(|s| !s.is_empty())
+            {
+                push_group(&mut sametail, e, id);
+            }
         }
         for (_, group) in samehead.iter() {
             if group.len() > 1 {
